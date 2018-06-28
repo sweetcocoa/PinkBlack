@@ -1,0 +1,7 @@
+pytorch >= 0.4
+pillow
+scikit-learn
+scikit-image
+matplotlib
+opencv-python
+backtrace
