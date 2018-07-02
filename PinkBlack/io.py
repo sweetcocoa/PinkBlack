@@ -1,6 +1,7 @@
 import sys, os
 import torch
 import random
+import numpy as np
 
 
 def setup(trace=True, pdb_on_error=True):
