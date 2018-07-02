@@ -3,7 +3,11 @@
 내가 딥 러닝 개발하는데 필요한 함수 모음
 
 1. argument parse
-- example) python main.py model=resnet gpu=2
+- example) 
+```bash
+python main.py model=resnet gpu=2
+```
+
 ```python
 import PinkBlack, os
 PinkBlack.io.setup()

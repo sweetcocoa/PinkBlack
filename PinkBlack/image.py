@@ -48,8 +48,13 @@ def align_face(img, landmark, origin=(0, 0)):
 
     일단은 정사각형만 지원.
     It only supports squares, not rectangles.
+
+
     :param img:  np array image (H, W, C)
     :param landmark:  np array coordinates 5 x 2. 눈1, 눈2, 코, 입 양 끝.
+    if len(landmark) == 68:
+        It will be converted to 5x2
+
     68개 랜드마크 기준으로
     [36:42 평균,
     42:48 평균,
@@ -59,6 +64,16 @@ def align_face(img, landmark, origin=(0, 0)):
     :param origin:
     :return:
     """
+
+    if len(landmark) == 68:
+        landmark = np.array([
+            landmark[36:42, :2].mean(axis=0),
+            landmark[42:48, :2].mean(axis=0),
+            landmark[30, :2],
+            landmark[48, :2],
+            landmark[54, :2]
+        ])
+
     dst_size = 112
     new_dst_size = 224
     src_img_size = max(img.size)
