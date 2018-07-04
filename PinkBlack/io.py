@@ -4,12 +4,13 @@ import random
 import numpy as np
 
 
-def setup(trace=True, pdb_on_error=True):
+def setup(trace=True, pdb_on_error=True, default_args=None):
     """
     커맨드라인 파싱 -> os.environ 에 추가
     gpu -> CUDA_VISIBLE_DEVICES
     :param trace:
     :param pdb_on_error:
+    :param default_args: dict.
     :return:
     """
     if trace:
@@ -27,6 +28,13 @@ def setup(trace=True, pdb_on_error=True):
 
         sys.excepthook = new_hook
 
+    if default_args is not None:
+        args = dict(default_args)
+        if 'gpu' in default_args:
+            args['CUDA_VISIBLE_DEVICES'] = args['gpu']
+            del args['gpu']
+        os.environ.update(default_args)
+
     new = {}
 
     for token in sys.argv[1:]:
@@ -38,11 +46,10 @@ def setup(trace=True, pdb_on_error=True):
             key = token[:idx]
             value = token[idx + 1:]
             if key.lower() == "gpu":
-                key = "CUDA_VISIBLE_DEVICE"
+                key = "CUDA_VISIBLE_DEVICES"
             new[key] = value
 
     os.environ.update(new)
-
 
 
 def set_seeds(seed, strict=False):
