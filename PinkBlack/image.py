@@ -42,13 +42,11 @@ def get_crop_from_center(img, center, size):
     return output_img
 
 
-def align_face(img, landmark, origin=(0, 0)):
+
+def align_face(img, landmark, origin=(0, 0), destination_size=(96, 112)):
+    # TODO :: 원하는 사이즈의 이미지로 align
     """
     얼굴 랜드마크 좌표 (눈, 코, 입)을 중심으로 이미지를 정렬함.
-
-    일단은 정사각형만 지원.
-    It only supports squares, not rectangles.
-
 
     :param img:  np array image (H, W, C)
     :param landmark:  np array coordinates 5 x 2. 눈1, 눈2, 코, 입 양 끝.
@@ -63,9 +61,11 @@ def align_face(img, landmark, origin=(0, 0)):
     54]
     :param origin:
     :return:
+
     """
 
     if len(landmark) == 68:
+        landmark = np.array(landmark)
         landmark = np.array([
             landmark[36:42, :2].mean(axis=0),
             landmark[42:48, :2].mean(axis=0),
@@ -74,23 +74,22 @@ def align_face(img, landmark, origin=(0, 0)):
             landmark[54, :2]
         ])
 
-    dst_size = 112
-    new_dst_size = 224
-    src_img_size = max(img.size)
+    ref_size = (96, 112)
+    # dst_size = 112
+    # src_img_size = max(img.shape)
     dst = np.array([
-        [30.2946 + 8, 51.6963],
-        [65.5318 + 8, 51.5014],
-        [48.0252 + 8, 71.7366],
-        [33.5493 + 8, 92.3655],
-        [62.7299 + 8, 92.2041]], dtype=np.float32 )  * new_dst_size / dst_size
-    p = src_img_size / new_dst_size
-    dst = dst * p
+        [30.2946, 51.6963],
+        [65.5318, 51.5014],
+        [48.0252, 71.7366],
+        [33.5493, 92.3655],
+        [62.7299, 92.2041]], dtype=np.float32 )
+
+    # p = src_img_size / dst_size
+    # dst = dst * p
 
     src = landmark - np.array(origin)
     tform = SimilarityTransform()
     tform.estimate(src, dst)
     M = tform.params[0:2, :]
-    out = cv2.warpAffine(img, M, (src_img_size, src_img_size), borderValue=0.0)
+    out = cv2.warpAffine(img, M, destination_size, borderValue=0.0)
     return out
-
-
