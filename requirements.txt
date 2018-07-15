@@ -5,3 +5,5 @@ scikit-image
 matplotlib
 opencv-python
 backtrace
+pretty_midi
+numpy
