@@ -92,6 +92,9 @@ def load_checkpoint(net, path, optimizer=None):
         optimizer.load_state_dict(saved_dict['optimizer.state_dict'])
         del saved_dict['optimizer.state_dict']
 
+    if optimizer is None and 'optimizer.state_dict' in saved_dict:
+        del saved_dict['optimizer.state_dict']
+
     print("Loaded", saved_dict)
     if optimizer is None:
         return net, saved_dict
