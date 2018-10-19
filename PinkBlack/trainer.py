@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+import os
+import shutil
 
 class AverageMeter(object):
     """Computes and stores the average and current value
@@ -24,22 +27,70 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
+def padding(arg, width, pad=' '):
+    if isinstance(arg, float):
+        return '{:.6f}'.format(arg).center(width, pad)
+    elif isinstance(arg, int):
+        return '{:6d}'.format(arg).center(width, pad)
+    elif isinstance(arg, str):
+        return arg.center(width, pad)
+    elif isinstance(arg, tuple):
+        if len(arg) != 2:
+            raise ValueError('Unknown type: {}'.format(type(arg), arg))
+        if not isinstance(arg[1], str):
+            raise ValueError('Unknown type: {}'
+                             .format(type(arg[1]), arg[1]))
+        return padding(arg[0], width, pad=pad)
+    else:
+        raise ValueError('Unknown type: {}'.format(type(arg), arg))
+
+
+def print_row(kwarg_list=[], pad=' '):
+    len_kwargs = len(kwarg_list)
+    term_width = shutil.get_terminal_size().columns
+    width = min((term_width - 1 - len_kwargs) * 9 // 10, 150) // len_kwargs
+    row = '|{}' * len_kwargs + '|'
+    columns = []
+    for kwarg in kwarg_list:
+        columns.append(padding(kwarg, width, pad=pad))
+    print(row.format(*columns))
+
+
+def cal_accuracy(pred, target):
+    pred = torch.max(pred, 1)[1]
+    corrects = torch.sum(pred == target).float()
+    return corrects / pred.size(0)
+
+
 class Trainer:
     def __init__(self, net,
                  criterion=None,
-                 metric=None,
+                 metric=cal_accuracy,
                  dataloader=None,
+                 train_dataloader=None,
+                 val_dataloader=None,
                  optimizer=None,
                  lr_scheduler=None,
-                 logpath="./log"):
-        assert isinstance(dataloader, dict)
+                 logdir="./log",
+                 ckpt="./ckpt/ckpt.pth"):
 
         self.net = net
-        self.criterion = criterion
+        self.criterion = nn.CrossEntropyLoss() if criterion is None else criterion
         self.metric = metric
-        self.dataloader = dataloader
-        self.optimizer = optimizer
+
+        if dataloader is not None and isinstance(dataloader, dict):
+            self.dataloader = dataloader
+        elif train_dataloader is not None and val_dataloader is not None:
+            self.dataloader = {'train': train_dataloader,
+                               'val': val_dataloader}
+        else:
+            raise RuntimeError("Init Trainer :: Two dataloaders are needed!")
+
+        self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters())) if optimizer is None else optimizer
         self.lr_scheduler = lr_scheduler
+        self.logdir = logdir
+        self.ckpt = ckpt
+
         self.device = torch.device("cpu")
         for param in self.net.parameters():
             self.device = param.device
@@ -47,7 +98,7 @@ class Trainer:
 
         try:
             from tensorboardX import SummaryWriter
-            self.logger = SummaryWriter(logpath)
+            self.logger = SummaryWriter(self.logdir)
         except ImportError:
             self.logger = None
 
@@ -55,12 +106,24 @@ class Trainer:
 
         from time import time
         from tqdm import tqdm
+
+        kwarg_list = ['epoch', 'train_loss', 'train_metric',
+                      'val loss', 'val metric', 'time']
+
+        print_row(kwarg_list=['']*len(kwarg_list), pad='-')
+        print_row(kwarg_list=kwarg_list, pad=' ')
+        print_row(kwarg_list=['']*len(kwarg_list), pad='-')
+
+        min_val_loss = 1e8
         for ep in range(1, epoch+1):
             start_time = time()
             train_loss = AverageMeter()
             val_loss = AverageMeter()
+            train_metric = AverageMeter()
+            val_metric = AverageMeter()
 
             for phase in ['train', 'val']:
+
                 running_loss = AverageMeter()
                 running_metric = AverageMeter()
 
@@ -71,7 +134,7 @@ class Trainer:
                     self.net.eval()
                     dataloader = self.dataloader['val']
 
-                for batch_x, batch_y in tqdm(dataloader):
+                for batch_x, batch_y in tqdm(dataloader, leave=False):
                     self.optimizer.zero_grad()
 
                     batch_x = batch_x.to(self.device)
@@ -90,33 +153,52 @@ class Trainer:
                     running_metric.update(metric.item(), batch_x.size(0))
 
                 if phase == "train":
-                    train_loss = running_loss
-                    train_metric = running_metric
+                    train_loss = running_loss.avg
+                    train_metric = running_metric.avg
                 elif phase == "val":
-                    val_loss = running_loss
-                    val_metric = running_metric
+                    val_loss = running_loss.avg
+                    val_metric = running_metric.avg
 
-            if isinstance(self.scheduler, ReduceLROnPlateau):
-                self.scheduler.step(val_loss)
-            else:
-                self.scheduler.step()
+            if self.lr_scheduler is not None:
+                if isinstance(self.lr_scheduler, ReduceLROnPlateau):
+                    self.lr_scheduler.step(val_loss)
+                else:
+                    self.lr_scheduler.step()
+
+            ep_str = str(ep)
+            if min_val_loss > val_loss:
+                min_val_loss = val_loss
+                self.save_model()
+                ep_str = (str(ep)) + '-best'
 
             elapsed_time = time() - start_time
-            self.logger.add_scalars("curves/loss", {'train' : train_loss.avg,
-                                                    'val': val_loss.avg}, ep)
-            self.logger.add_scalars("curves/metric", {'train' : train_metric.avg,
-                                                    'val': val_metric.avg}, ep)
-            self.logger.add_scalar("curves/time", elapsed_time, ep)
-            # self.log(train_loss.avg, "train_loss", epoch)
-            # self.log(train_metric.avg, "train_metric", epoch)
-            # self.log(val_loss.avg, "val_loss", epoch)
-            # self.log(val_metric.avg, "val_metric", epoch)
+            if self.logger is not None:
+                self.logger.add_scalars("curves/loss", {'train' : train_loss,
+                                                        'val': val_loss}, ep)
+                self.logger.add_scalars("curves/metric", {'train' : train_metric,
+                                                        'val': val_metric}, ep)
+                self.logger.add_scalar("curves/time", elapsed_time, ep)
 
+            # print(ep_str, train_loss.avg, train_metric.avg, val_loss.avg, val_metric.avg, elapsed_time)
+            print_row(kwarg_list=[ep_str, train_loss, train_metric,
+                                  val_loss, val_metric, elapsed_time], pad=' ')
+            print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-        pass
 
     def log(self, msg, step):
         pass
+
+    def save_model(self):
+        os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
+        if hasattr(self.net, 'module'):
+            state_dict = self.net.module.state_dict()
+        else:
+            state_dict = self.net.state_dict()
+        torch.save(state_dict, self.ckpt)
+
+    def inference_model(self):
+        pass
+
 
 if __name__ == "__main__":
     # demo.py
@@ -125,52 +207,40 @@ if __name__ == "__main__":
     import torchvision.utils as vutils
     import numpy as np
     import torchvision.models as models
-    from torchvision import datasets
+    from torch.utils.data import DataLoader
+    from torchvision import datasets, transforms
     from tensorboardX import SummaryWriter
+    import torch.nn.functional as F
 
-    resnet18 = models.resnet18(False)
-    writer = SummaryWriter()
-    sample_rate = 44100
-    freqs = [262, 294, 330, 349, 392, 440, 440, 440, 440, 440, 440]
+    class Net(nn.Module):
+        def __init__(self):
+            super(Net, self).__init__()
+            self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+            self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+            self.conv2_drop = nn.Dropout2d()
+            self.fc1 = nn.Linear(320, 50)
+            self.fc2 = nn.Linear(50, 10)
 
-    for n_iter in range(100):
+        def forward(self, x):
+            x = F.relu(F.max_pool2d(self.conv1(x), 2))
+            x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+            x = x.view(-1, 320)
+            x = F.relu(self.fc1(x))
+            x = F.dropout(x, training=self.training)
+            x = self.fc2(x)
+            return x
 
-        dummy_s1 = torch.rand(1)
-        dummy_s2 = torch.rand(1)
-        # data grouping by `slash`
-        writer.add_scalar('data/scalar1', dummy_s1[0], n_iter)
-        writer.add_scalar('data/scalar2', dummy_s2[0], n_iter)
+    resnet18 = Net().cuda()
 
-        writer.add_scalars('data/scalar_group', {'xsinx': n_iter * np.sin(n_iter),
-                                                 'xcosx': n_iter * np.cos(n_iter),
-                                                 'arctanx': np.arctan(n_iter)}, n_iter)
+    transform = transforms.Compose([
+        transforms.Resize((28, 28)),
+        transforms.ToTensor(),
+    ])
 
-        dummy_img = torch.rand(32, 3, 64, 64)  # output from network
-        if n_iter % 10 == 0:
-            x = vutils.make_grid(dummy_img, normalize=True, scale_each=True)
-            writer.add_image('Image', x, n_iter)
+    train_dataset = datasets.MNIST('mnist', train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST('mnist', train=False, transform=transform)
+    train_dataloader = DataLoader(train_dataset, pin_memory=True, num_workers=4, shuffle=True, batch_size=32)
+    test_dataloader = DataLoader(test_dataset, pin_memory=True, num_workers=4, batch_size=32, shuffle=True)
 
-            dummy_audio = torch.zeros(sample_rate * 2)
-            for i in range(x.size(0)):
-                # amplitude of sound should in [-1, 1]
-                dummy_audio[i] = np.cos(freqs[n_iter // 10] * np.pi * float(i) / float(sample_rate))
-            writer.add_audio('myAudio', dummy_audio, n_iter, sample_rate=sample_rate)
-
-            writer.add_text('Text', 'text logged at step:' + str(n_iter), n_iter)
-
-            for name, param in resnet18.named_parameters():
-                writer.add_histogram(name, param.clone().cpu().data.numpy(), n_iter)
-
-            # needs tensorboard 0.4RC or later
-            writer.add_pr_curve('xoxo', np.random.randint(2, size=100), np.random.rand(100), n_iter)
-
-    dataset = datasets.MNIST('mnist', train=False, download=True)
-    images = dataset.test_data[:100].float()
-    label = dataset.test_labels[:100]
-
-    features = images.view(100, 784)
-    writer.add_embedding(features, metadata=label, label_img=images.unsqueeze(1))
-
-    # export scalar data to JSON for external processing
-    writer.export_scalars_to_json("./all_scalars.json")
-    writer.close()
+    trainer = Trainer(resnet18, train_dataloader=train_dataloader, val_dataloader=test_dataloader)
+    trainer.train(100)
