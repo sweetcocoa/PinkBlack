@@ -106,9 +106,10 @@ class Trainer:
 
         from time import time
         from tqdm import tqdm
-
+        from datetime import datetime
         kwarg_list = ['epoch', 'train_loss', 'train_metric',
                       'val loss', 'val metric', 'time']
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
         print_row(kwarg_list=kwarg_list, pad=' ')
@@ -173,20 +174,16 @@ class Trainer:
 
             elapsed_time = time() - start_time
             if self.logger is not None:
-                self.logger.add_scalars("curves/loss", {'train' : train_loss,
+                self.logger.add_scalars(f"{timestamp}/loss", {'train' : train_loss,
                                                         'val': val_loss}, ep)
-                self.logger.add_scalars("curves/metric", {'train' : train_metric,
+                self.logger.add_scalars(f"{timestamp}/metric", {'train' : train_metric,
                                                         'val': val_metric}, ep)
-                self.logger.add_scalar("curves/time", elapsed_time, ep)
+                self.logger.add_scalar(f"{timestamp}/time", elapsed_time, ep)
 
             # print(ep_str, train_loss.avg, train_metric.avg, val_loss.avg, val_metric.avg, elapsed_time)
             print_row(kwarg_list=[ep_str, train_loss, train_metric,
                                   val_loss, val_metric, elapsed_time], pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
-
-
-    def log(self, msg, step):
-        pass
 
     def save_model(self):
         os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
@@ -195,9 +192,6 @@ class Trainer:
         else:
             state_dict = self.net.state_dict()
         torch.save(state_dict, self.ckpt)
-
-    def inference_model(self):
-        pass
 
 
 if __name__ == "__main__":
