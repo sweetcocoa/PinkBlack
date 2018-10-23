@@ -216,7 +216,7 @@ if __name__ == "__main__":
             self.fc2 = nn.Linear(50, 10)
 
         def forward(self, x):
-            x = F.relu(F.max_pool2d(self.conv1(x), 2))
+            x = F.relu(F.max_pool2d(self.conv1(x), 2))  
             x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
             x = x.view(-1, 320)
             x = F.relu(self.fc1(x))

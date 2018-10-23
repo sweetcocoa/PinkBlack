@@ -1,17 +1,49 @@
 import sys, os
 import torch
-import random
-import numpy as np
+
+def get_args(default_args: dict):
+    import argparse
+    parser = argparse.ArgumentParser()
+    for k, v in default_args.items():
+        k = k.lower()
+        parser.add_argument(f'--{k}', default=v, help=f'{k} : default:{v}')
+    args = parser.parse_args()
+
+    if hasattr(args, "gpu"):
+        os.environ.update({'CUDA_VISIBLE_DEVICES': str(args.gpu)})
+
+    return args
 
 
 def setup(trace=True, pdb_on_error=True, default_args=None):
     """
-    커맨드라인 파싱 -> os.environ 에 추가
-    gpu -> CUDA_VISIBLE_DEVICES
     :param trace:
     :param pdb_on_error:
-    :param default_args: dict.
-    :return:
+    :param default_args:
+    gpu -> CUDA_VISIBLE_DEVICES
+    :return: argparsed args
+
+    Example >>
+    ```python3
+    # Before PinkBlack
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--lr', default=1e-3, type=float)
+    parser.add_argument('--epochs', default=100, type=int)
+    parser.add_argument('--ckpt', default='ckpt.pth', type=str)
+    args = parser.parse_args()
+    ```
+    ```bash
+    CUDA_VISIBLE_DEVICES=1,3 python myscript.py --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
+    ```
+    ```python3
+    # Using PinkBlack
+    PinkBlack.io.setup(trace=True, pdb_on_error=True, default_args={'gpu':"1,3", 'batch_size':32, 'lr':1e-3, 'epochs':100, 'ckpt': "ckpt.pth"})
+    ```
+    ```bash
+    python myscript.py --gpu 1,3 --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
+    ```
+
     """
     if trace:
         import backtrace
@@ -28,29 +60,11 @@ def setup(trace=True, pdb_on_error=True, default_args=None):
 
         sys.excepthook = new_hook
 
+    args = None
     if default_args is not None:
-        args = dict(default_args)
-        if 'gpu' in default_args:
-            args['CUDA_VISIBLE_DEVICES'] = args['gpu']
-            del args['gpu']
-        os.environ.update(default_args)
+        args = get_args(default_args)
 
-    new = {}
-
-    for token in sys.argv[1:]:
-
-        idx = token.find('=')
-        if idx == -1:
-            continue
-        else:
-            key = token[:idx]
-            value = token[idx + 1:]
-            if key.lower() == "gpu":
-                key = "CUDA_VISIBLE_DEVICES"
-            new[key] = value
-
-    os.environ.update(new)
-
+    return args
 
 def set_seeds(seed, strict=False):
     """
@@ -60,6 +74,8 @@ def set_seeds(seed, strict=False):
     If strict == True, then cudnn backend will be deterministic
     torch.backends.cudnn.deterministic = True
     """
+    import random
+    import numpy as np
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -105,11 +121,21 @@ def load_checkpoint(net, path, optimizer=None):
 load_model = load_checkpoint
 
 
-def save_checkpoint(save_dict, path, is_best):
-    torch.save(save_dict, path)
-    if is_best:
-        torch.save(save_dict, path + ".best")
-
+def save_checkpoint(obj, path):
+    """
+    :param obj: dict or nn.Module
+    :param path: path to save
+    """
+    if isinstance(obj, dict):
+        torch.save(obj, path)
+    elif isinstance(obj, torch.nn.Module):
+        if hasattr(obj, 'module'):
+            save_dict = {'state_dict': obj.module.state_dict()}
+        else:
+            save_dict = {'state_dict': obj.state_dict()}
+        torch.save(save_dict)
+    else:
+        raise NotImplementedError
 
 save_model = save_checkpoint
 
