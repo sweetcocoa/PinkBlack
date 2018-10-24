@@ -1,6 +1,16 @@
 import sys, os
 import torch
 
+def convert_type(string:str):
+    try:
+        f = float(string)
+        if f.is_integer():
+            return int(f)
+        else:
+            return f
+    except ValueError:
+        return string
+
 def get_args(default_args: dict):
     import argparse
     parser = argparse.ArgumentParser()
@@ -11,6 +21,11 @@ def get_args(default_args: dict):
 
     if hasattr(args, "gpu"):
         os.environ.update({'CUDA_VISIBLE_DEVICES': str(args.gpu)})
+
+    for k in default_args.keys():
+        k = k.lower()
+        val = getattr(args, k)
+        setattr(args, k, convert_type(str(val)))
 
     return args
 
@@ -140,3 +155,8 @@ def save_checkpoint(obj, path):
 save_model = save_checkpoint
 
 
+if __name__ == "__main__":
+    args = get_args({"batch_size":8, "lr":"아무거나"})
+    import pdb
+    pdb.set_trace()
+    attr
