@@ -5,13 +5,14 @@
 1. argument parse
 - example) 
 ```bash
-python main.py model=resnet gpu=2
+python main.py --model resnet --gpu 2
 ```
 
 ```python
 import PinkBlack, os
-PinkBlack.io.setup()
-print(os.environ['model']) # "resnet"
+args = PinkBlack.io.setup(default_args={'Model':"alexnet", "gpu":"1,2"})
+print(args.model) # "resnet"
+print(args.gpu) # "1, 2"
 print(os.environ['CUDA_VISIBLE_DEVICE']) # 2
 ```
 
