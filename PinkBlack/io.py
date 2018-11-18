@@ -1,5 +1,23 @@
 import sys, os
-import torch
+try:
+    import torch
+except ImportError:
+    print("Warning : No pytorch Module is imported, Some functions may raise errors.", file=sys.stderr)
+
+
+class PinkBlackLogger:
+    def __init__(self, fp, stream=sys.stdout):
+        self.stream = stream
+        self.fp = fp
+
+    def write(self, message):
+        self.fp.write(message)
+        self.fp.flush()
+        self.stream.write(message)
+
+    def flush(self):
+        pass
+
 
 def convert_type(string:str):
     try:
@@ -11,15 +29,21 @@ def convert_type(string:str):
     except ValueError:
         return string
 
+
 def get_args(default_args: dict):
     import argparse
     parser = argparse.ArgumentParser()
+
+    if not "gpu" in default_args.keys():
+        parser.add_argument(f'--gpu', default=None, help='CUDA visible devices : default:None')
+
     for k, v in default_args.items():
         k = k.lower()
         parser.add_argument(f'--{k}', default=v, help=f'{k} : default:{v}')
     args = parser.parse_args()
 
-    if hasattr(args, "gpu"):
+    if args.gpu and "gpu" in default_args.keys():
+        # Default argument로 gpu를 줬다면 이렇게 세팅
         os.environ.update({'CUDA_VISIBLE_DEVICES': str(args.gpu)})
 
     for k in default_args.keys():
@@ -29,12 +53,13 @@ def get_args(default_args: dict):
 
     return args
 
-
-def setup(trace=True, pdb_on_error=True, default_args=None):
+def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolog_dir="pinkblack_autolog"):
     """
     :param trace:
     :param pdb_on_error:
     :param default_args:
+    :param autolog:
+    :param autolog_dir:
     gpu -> CUDA_VISIBLE_DEVICES
     :return: argparsed args
 
@@ -79,7 +104,21 @@ def setup(trace=True, pdb_on_error=True, default_args=None):
     if default_args is not None:
         args = get_args(default_args)
 
+    if autolog:
+        import time, datetime
+        dt = datetime.datetime.fromtimestamp(time.time())
+        dt = datetime.datetime.strftime(dt, 'pinkblack_%Y%m%d_%H%M%S.log')
+        logdir = autolog_dir
+
+        if not os.path.exists(logdir):
+            os.mkdir(logdir)
+
+        fp = open(os.path.join(logdir, dt), "w")
+        sys.stdout = PinkBlackLogger(fp, sys.stdout)
+        sys.stderr = PinkBlackLogger(fp, sys.stderr)
+
     return args
+
 
 def set_seeds(seed, strict=False):
     """
@@ -157,6 +196,6 @@ save_model = save_checkpoint
 
 if __name__ == "__main__":
     args = get_args({"batch_size":8, "lr":"아무거나"})
-    import pdb
-    pdb.set_trace()
-    attr
+    setup()
+    1/0
+    11/1

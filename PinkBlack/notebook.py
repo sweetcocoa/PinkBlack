@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import torch
-import torchvision.transforms.functional as F
 
 def show_multiple_images(imgs, num=(6,6), save_path=None, img_size=3):
     """
@@ -34,4 +33,3 @@ def show_multiple_images(imgs, num=(6,6), save_path=None, img_size=3):
         fig.savefig(save_path)
     plt.show()
     plt.close(fig)
-    F.to_pil_image()
