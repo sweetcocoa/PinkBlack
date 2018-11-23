@@ -16,7 +16,7 @@ class PinkBlackLogger:
         self.stream.write(message)
 
     def flush(self):
-        pass
+        self.stream.flush()
 
 
 def convert_type(string:str):

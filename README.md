@@ -1,25 +1,26 @@
 # PinkBlack #
 ----
-내가 딥 러닝 개발하는데 필요한 함수 모음
+> 개발(주로 딥러닝)을 위한 여러 가지 잡 모듈
 
-1. argument parse
-- example) 
-```bash
-python main.py --model resnet --gpu 2
-```
+1. 자동 로깅 (Autolog)
+2. 에러 발생할 때 자동 hooking (Auto-raise pdb)
+3. 명령줄 분해 (Argument Parsing)
+    ```bash
+    python main.py --gpu 2 --batch_size 64 --model resnet
+    ``` 
+    ```python
+    import PinkBlack.io
+    # Set default argument
+    args = PinkBlack.io.setup(default_args={'gpu':3,
+                                            'batch_size':32,
+                                            'model':"PinkNet"})
+    # Autolog and pdb hooking will be activated.
+    print(args.batch_size)
+    ```
+    ```bash
+    64
+    ```
+4. 이미지 시각화 (Image Visualization)
+5. Midi 객체 관련 함수 (Functions to Use Midi Instances)
 
-```python
-import PinkBlack, os
-args = PinkBlack.io.setup(default_args={'Model':"alexnet", "gpu":"1,2"})
-print(args.model) # "resnet"
-print(args.gpu) # "1, 2"
-print(os.environ['CUDA_VISIBLE_DEVICE']) # 2
-```
-
-2. Image process
-- 얼굴 랜드마크 기준으로 이미지 Align
-- 이미지 비율 유지하며 정사각 패딩, 리사이즈
-- 이미지 중심점 기준 크롭
-
-3. notebook 관련
-- 이미지, 타일 수 지정으로 한 번에 visualize
+> TODO :: Keras같은 Pytorch모델 훈련 인터페이스 
