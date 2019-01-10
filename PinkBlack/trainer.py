@@ -96,11 +96,15 @@ class Trainer:
             self.device = param.device
             break
 
-        try:
-            from tensorboardX import SummaryWriter
-            self.logger = SummaryWriter(self.logdir)
-        except ImportError:
+        if self.logdir is not None:
+            try:
+                from tensorboardX import SummaryWriter
+                self.logger = SummaryWriter(self.logdir)
+            except ImportError:
+                self.logger = None
+        else:
             self.logger = None
+
 
     def train(self, epoch):
 
@@ -116,6 +120,7 @@ class Trainer:
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
         min_val_loss = 1e8
+        max_val_metric = 0
         for ep in range(1, epoch+1):
             start_time = time()
             train_loss = AverageMeter()
@@ -167,9 +172,9 @@ class Trainer:
                     self.lr_scheduler.step()
 
             ep_str = str(ep)
-            if min_val_loss > val_loss:
-                min_val_loss = val_loss
-                self.save_model()
+            if max_val_metric < val_metric:
+                max_val_metric = val_metric
+                self.save()
                 ep_str = (str(ep)) + '-best'
 
             elapsed_time = time() - start_time
@@ -180,12 +185,11 @@ class Trainer:
                                                         'val': val_metric}, ep)
                 self.logger.add_scalar(f"{timestamp}/time", elapsed_time, ep)
 
-            # print(ep_str, train_loss.avg, train_metric.avg, val_loss.avg, val_metric.avg, elapsed_time)
             print_row(kwarg_list=[ep_str, train_loss, train_metric,
                                   val_loss, val_metric, elapsed_time], pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-    def save_model(self):
+    def save(self):
         os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
         if hasattr(self.net, 'module'):
             state_dict = self.net.module.state_dict()

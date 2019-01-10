@@ -4,6 +4,6 @@ setup(
     name='PinkBlack',
     author='choijongho',
     author_email='sweetcocoa@snu.ac.kr',
-    version='0.0.2',
+    version='0.0.3',
     packages=['PinkBlack'],
 )
