@@ -120,7 +120,7 @@ class Trainer:
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
         min_val_loss = 1e8
-        max_val_metric = 0
+        max_val_metric = -1e8
         for ep in range(1, epoch+1):
             start_time = time()
             train_loss = AverageMeter()
