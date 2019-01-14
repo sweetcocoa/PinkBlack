@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from tqdm import tqdm
+from time import time
+from datetime import datetime
+
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
 import shutil
@@ -105,12 +109,21 @@ class Trainer:
         else:
             self.logger = None
 
+    def save(self):
+        os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
+        if hasattr(self.net, 'module'):
+            state_dict = self.net.module.state_dict()
+        else:
+            state_dict = self.net.state_dict()
+        torch.save(state_dict, self.ckpt)
+
+    def load(self, f="./ckpt/ckpt.pth"):
+        if hasattr(self.net, 'module'):
+            self.net.module.load_state_dict(torch.load(f, map_location=self.device))
+        else:
+            self.net.load_state_dict(torch.load(f, map_location=self.device))
 
     def train(self, epoch):
-
-        from time import time
-        from tqdm import tqdm
-        from datetime import datetime
         kwarg_list = ['epoch', 'train_loss', 'train_metric',
                       'val loss', 'val metric', 'time']
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -123,47 +136,11 @@ class Trainer:
         max_val_metric = -1e8
         for ep in range(1, epoch+1):
             start_time = time()
-            train_loss = AverageMeter()
-            val_loss = AverageMeter()
-            train_metric = AverageMeter()
-            val_metric = AverageMeter()
 
-            for phase in ['train', 'val']:
-
-                running_loss = AverageMeter()
-                running_metric = AverageMeter()
-
-                if phase == 'train':
-                    self.net.train()
-                    dataloader = self.dataloader['train']
-                elif phase == "val":
-                    self.net.eval()
-                    dataloader = self.dataloader['val']
-
-                for batch_x, batch_y in tqdm(dataloader, leave=False):
-                    self.optimizer.zero_grad()
-
-                    batch_x = batch_x.to(self.device)
-                    batch_y = batch_y.to(self.device)
-
-                    with torch.set_grad_enabled(phase == "train"):
-                        outputs = self.net(batch_x)
-                        loss = self.criterion(outputs, batch_y)
-                        metric = self.metric(outputs, batch_y)
-
-                        if phase == "train":
-                            loss.backward()
-                            self.optimizer.step()
-
-                    running_loss.update(loss.item(), batch_x.size(0))
-                    running_metric.update(metric.item(), batch_x.size(0))
-
-                if phase == "train":
-                    train_loss = running_loss.avg
-                    train_metric = running_metric.avg
-                elif phase == "val":
-                    val_loss = running_loss.avg
-                    val_metric = running_metric.avg
+            phase = 'train'
+            train_loss, train_metric = self._train(phase)
+            phase = 'val'
+            val_loss, val_metric = self._train(phase)
 
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
@@ -189,14 +166,37 @@ class Trainer:
                                   val_loss, val_metric, elapsed_time], pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-    def save(self):
-        os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
-        if hasattr(self.net, 'module'):
-            state_dict = self.net.module.state_dict()
-        else:
-            state_dict = self.net.state_dict()
-        torch.save(state_dict, self.ckpt)
+    def _train(self, phase):
 
+        running_loss = AverageMeter()
+        running_metric = AverageMeter()
+
+        if phase == 'train':
+            self.net.train()
+            dataloader = self.dataloader['train']
+        elif phase == "val":
+            self.net.eval()
+            dataloader = self.dataloader['val']
+
+        for batch_x, batch_y in tqdm(dataloader, leave=False):
+            self.optimizer.zero_grad()
+
+            batch_x = batch_x.to(self.device)
+            batch_y = batch_y.to(self.device)
+
+            with torch.set_grad_enabled(phase == "train"):
+                outputs = self.net(batch_x)
+                loss = self.criterion(outputs, batch_y)
+                metric = self.metric(outputs, batch_y)
+
+                if phase == "train":
+                    loss.backward()
+                    self.optimizer.step()
+
+            running_loss.update(loss.item(), batch_x.size(0))
+            running_metric.update(metric.item(), batch_x.size(0))
+
+        return running_loss.avg, running_metric.avg
 
 if __name__ == "__main__":
     # demo.py
@@ -241,4 +241,4 @@ if __name__ == "__main__":
     test_dataloader = DataLoader(test_dataset, pin_memory=True, num_workers=4, batch_size=32, shuffle=True)
 
     trainer = Trainer(resnet18, train_dataloader=train_dataloader, val_dataloader=test_dataloader)
-    trainer.train(100)
+    trainer.new_train(10)
