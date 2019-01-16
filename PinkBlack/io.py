@@ -107,7 +107,7 @@ def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolo
     if autolog:
         import time, datetime
         dt = datetime.datetime.fromtimestamp(time.time())
-        dt = datetime.datetime.strftime(dt, 'pinkblack_%Y%m%d_%H%M%S.log')
+        dt = datetime.datetime.strftime(dt, '{}_%Y%m%d_%H%M%S.log'.format(os.path.basename(sys.argv[0])))
         logdir = autolog_dir
 
         if not os.path.exists(logdir):

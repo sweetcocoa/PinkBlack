@@ -1,5 +1,5 @@
 from PIL import Image
-import torch.utils.data.Dataset
+import torch.utils.data
 
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
@@ -23,7 +23,7 @@ class ImageLabelDataset(torch.utils.data.Dataset):
 
     """
 
-    def devide(self, ratio=(0.8, 0.2), valid_transform=None, valid_label_transform=None):
+    def split(self, ratio=(0.8, 0.2), valid_transform=None, valid_label_transform=None):
         import random
         combined = list(zip(self.paths, self.labels))
         random.shuffle(combined)
