@@ -116,12 +116,16 @@ class Trainer:
         else:
             state_dict = self.net.state_dict()
         torch.save(state_dict, self.ckpt)
+        torch.save(self.optimizer.state_dict(), self.ckpt + ".optimizer")
 
     def load(self, f="./ckpt/ckpt.pth"):
         if hasattr(self.net, 'module'):
             self.net.module.load_state_dict(torch.load(f, map_location=self.device))
         else:
             self.net.load_state_dict(torch.load(f, map_location=self.device))
+
+        if os.path.exists(f + ".optimizer"):
+            self.optimizer.load_state_dict(torch.load(f + ",optimizer"))
 
     def train(self, epoch):
         kwarg_list = ['epoch', 'train_loss', 'train_metric',
@@ -181,20 +185,29 @@ class Trainer:
         for batch_x, batch_y in tqdm(dataloader, leave=False):
             self.optimizer.zero_grad()
 
-            batch_x = batch_x.to(self.device)
-            batch_y = batch_y.to(self.device)
+            if isinstance(batch_x, list):
+                batch_x = [x.to(self.device) for x in batch_x]
+            else:
+                batch_x = [batch_x.to(self.device)]
+
+            if isinstance(batch_y, list):
+                batch_y = [y.to(self.device) for y in batch_y]
+            else:
+                batch_y = [batch_y.to(self.device)]
 
             with torch.set_grad_enabled(phase == "train"):
-                outputs = self.net(batch_x)
-                loss = self.criterion(outputs, batch_y)
-                metric = self.metric(outputs, batch_y)
+                outputs = self.net(*batch_x)
+                loss = self.criterion(outputs, *batch_y)
 
                 if phase == "train":
                     loss.backward()
                     self.optimizer.step()
 
-            running_loss.update(loss.item(), batch_x.size(0))
-            running_metric.update(metric.item(), batch_x.size(0))
+            with torch.no_grad():
+                metric = self.metric(outputs, *batch_y)
+
+            running_loss.update(loss.item(), batch_x[0].size(0))
+            running_metric.update(metric.item(), batch_x[0].size(0))
 
         return running_loss.avg, running_metric.avg
 
