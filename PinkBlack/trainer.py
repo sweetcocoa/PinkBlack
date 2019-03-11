@@ -4,6 +4,7 @@ from torch.optim import Adam
 from tqdm import tqdm
 from time import time
 from datetime import datetime
+from collections import defaultdict
 
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
@@ -76,7 +77,9 @@ class Trainer:
                  optimizer=None,
                  lr_scheduler=None,
                  logdir="./log",
-                 ckpt="./ckpt/ckpt.pth"):
+                 ckpt="./ckpt/ckpt.pth",
+                 config=None
+                 ):
 
         self.net = net
         self.criterion = nn.CrossEntropyLoss() if criterion is None else criterion
@@ -94,6 +97,20 @@ class Trainer:
         self.lr_scheduler = lr_scheduler
         self.logdir = logdir
         self.ckpt = ckpt
+        if config is None:
+            self.config = defaultdict(float)
+            self.config['max_val_metric'] = -1e8
+
+        else:
+            import argparse
+
+            self.config = defaultdict(float)
+            if isinstance(config, argparse.Namespace):
+                self.config.update(vars(config))
+            else:
+                self.config = config
+            if 'max_val_metric' not in self.config:
+                self.config['max_val_metric'] = -1e8
 
         self.device = torch.device("cpu")
         for param in self.net.parameters():
@@ -109,7 +126,11 @@ class Trainer:
         else:
             self.logger = None
 
+        self.epoch = 0
+
     def save(self):
+        import json
+
         os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
         if hasattr(self.net, 'module'):
             state_dict = self.net.module.state_dict()
@@ -117,15 +138,28 @@ class Trainer:
             state_dict = self.net.state_dict()
         torch.save(state_dict, self.ckpt)
         torch.save(self.optimizer.state_dict(), self.ckpt + ".optimizer")
+        with open(self.ckpt + ".config", "w") as f:
+            self.config['current_epoch'] = self.epoch
+            json.dump(self.config, f)
 
     def load(self, f="./ckpt/ckpt.pth"):
-        if hasattr(self.net, 'module'):
+        import json
+
+        if isinstance(self.net, nn.DataParallel):
             self.net.module.load_state_dict(torch.load(f, map_location=self.device))
         else:
             self.net.load_state_dict(torch.load(f, map_location=self.device))
 
+        if os.path.exists(f + ".config"):
+            with open(f + ".config", "r") as fp:
+                dic = json.loads(fp.read())
+            self.config = defaultdict(float, dic)
+            if 'current_epoch' in self.config:
+                self.epoch = int(self.config['current_epoch'])
+            print("Loaded,", self.config)
+
         if os.path.exists(f + ".optimizer"):
-            self.optimizer.load_state_dict(torch.load(f + ",optimizer"))
+            self.optimizer.load_state_dict(torch.load(f + ".optimizer"))
 
     def train(self, epoch):
         kwarg_list = ['epoch', 'train_loss', 'train_metric',
@@ -136,9 +170,7 @@ class Trainer:
         print_row(kwarg_list=kwarg_list, pad=' ')
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-        min_val_loss = 1e8
-        max_val_metric = -1e8
-        for ep in range(1, epoch+1):
+        for ep in range(self.epoch + 1, self.epoch + epoch + 1):
             start_time = time()
 
             phase = 'train'
@@ -146,6 +178,7 @@ class Trainer:
             phase = 'val'
             val_loss, val_metric = self._train(phase)
 
+            self.epoch += 1
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
                     self.lr_scheduler.step(val_loss)
@@ -153,8 +186,8 @@ class Trainer:
                     self.lr_scheduler.step()
 
             ep_str = str(ep)
-            if max_val_metric < val_metric:
-                max_val_metric = val_metric
+            if self.config['max_val_metric'] < val_metric:
+                self.config['max_val_metric'] = val_metric
                 self.save()
                 ep_str = (str(ep)) + '-best'
 

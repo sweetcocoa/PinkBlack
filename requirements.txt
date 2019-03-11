@@ -7,3 +7,4 @@ backtrace
 pretty_midi
 numpy
 tensorboardX
+imgaug
