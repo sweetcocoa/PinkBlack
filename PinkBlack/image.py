@@ -3,22 +3,26 @@ import cv2
 import numpy as np
 from skimage.transform import SimilarityTransform
 
+from imgaug import augmenters as iaa
+import imgaug as ia
+
 
 class RatioScale:
     """
     이미지를 한쪽 길이가 max_size 인 이미지로 resize한 후 그리고 정사각형 모양으로 Padding
     Resizes an image with keeping aspect ratio, and adds black-padding so that the shape of the image is square.
     """
-    def __init__(self, max_size, method=Image.ANTIALIAS):
+    def __init__(self, max_size):
         self.max_size = max_size
-        self.method = method
+        self.hw = iaa.Scale({'height': self.max_size, 'width':"keep-aspect-ratio"}, ia.ALL)
+        self.wh = iaa.Scale({'width': self.max_size, 'height':"keep-aspect-ratio"}, ia.ALL)
 
-    def __call__(self, image):
-        image.thumbnail(self.max_size, self.method)
-        offset = (int((self.max_size[0] - image.size[0]) / 2), int((self.max_size[1] - image.size[1]) / 2))
-        back = Image.new("RGB", self.max_size, "black")
-        back.paste(image, offset)
-        return back
+    def __call__(self, x):
+        assert (len(x.shape) == 2 or len(x.shape) == 3) and isinstance(x, np.ndarray)
+        if x.shape[0] > x.shape[1]:
+            return self.hw.augment_image(x)
+        else:
+            return self.wh.augment_image(x)
 
 
 def get_crop_from_center(img, center, size):
