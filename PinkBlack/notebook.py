@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 
-def show_multiple_images(imgs, labels=[], num=(6,6), save_path=None, img_size=3):
+def show_multiple_images(imgs, labels=[], num=(6,6), save_path=None, img_size=3, display=True):
     """
     :param imgs: [img1, img2, img3 ... ] imgs are displayable on plt
     or tensor batch images
@@ -38,5 +38,6 @@ def show_multiple_images(imgs, labels=[], num=(6,6), save_path=None, img_size=3)
             ax.axis("off")
     if save_path is not None:
         fig.savefig(save_path)
-    plt.show()
+    if display:
+        plt.show()
     plt.close(fig)

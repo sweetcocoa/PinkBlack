@@ -11,7 +11,7 @@ class PinkBlackLogger:
         self.fp = fp
 
     def write(self, message):
-        self.fp.write(message)
+        self.fp.write(message.replace("\r", "\n"))
         self.fp.flush()
         self.stream.write(message)
 

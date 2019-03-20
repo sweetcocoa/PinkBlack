@@ -4,6 +4,6 @@ setup(
     name='PinkBlack',
     author='choijongho',
     author_email='sweetcocoa@snu.ac.kr',
-    version='0.0.5',
-    packages=['PinkBlack'],
+    version='0.0.7',
+    packages=['PinkBlack', 'PinkBlack.PinkModule', 'PinkBlack.PinkModule.sfd', 'PinkBlack.PinkModule.fan'],
 )
