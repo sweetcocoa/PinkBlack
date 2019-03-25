@@ -8,7 +8,10 @@ from collections import defaultdict
 
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
-import shutil
+import json
+
+from .PinkModule.logging import *
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value
@@ -32,35 +35,6 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def padding(arg, width, pad=' '):
-    if isinstance(arg, float):
-        return '{:.6f}'.format(arg).center(width, pad)
-    elif isinstance(arg, int):
-        return '{:6d}'.format(arg).center(width, pad)
-    elif isinstance(arg, str):
-        return arg.center(width, pad)
-    elif isinstance(arg, tuple):
-        if len(arg) != 2:
-            raise ValueError('Unknown type: {}'.format(type(arg), arg))
-        if not isinstance(arg[1], str):
-            raise ValueError('Unknown type: {}'
-                             .format(type(arg[1]), arg[1]))
-        return padding(arg[0], width, pad=pad)
-    else:
-        raise ValueError('Unknown type: {}'.format(type(arg), arg))
-
-
-def print_row(kwarg_list=[], pad=' '):
-    len_kwargs = len(kwarg_list)
-    term_width = shutil.get_terminal_size().columns
-    width = min((term_width - 1 - len_kwargs) * 9 // 10, 150) // len_kwargs
-    row = '|{}' * len_kwargs + '|'
-    columns = []
-    for kwarg in kwarg_list:
-        columns.append(padding(kwarg, width, pad=pad))
-    print(row.format(*columns))
-
-
 def cal_accuracy(pred, target):
     pred = torch.max(pred, 1)[1]
     corrects = torch.sum(pred == target).float()
@@ -76,10 +50,22 @@ class Trainer:
                  val_dataloader=None,
                  optimizer=None,
                  lr_scheduler=None,
-                 logdir="./log",
+                 logdir="./pinkblack_autolog/",
                  ckpt="./ckpt/ckpt.pth",
-                 config=None
                  ):
+        """
+        :param net: nn.Module Network. __call__(*batch_x)
+        :param criterion: loss function. __call__(prediction, *batch_y)
+        :param metric: metric function __call__(prediction, *batch_y).
+        *note* : bigger is better.
+        :param dataloader: 'train':train_dataloader, 'val':val_dataloader
+        :param train_dataloader:
+        :param val_dataloader:
+        :param optimizer: optimizer (torch.optim)
+        :param lr_scheduler:
+        :param logdir: tensorboardX log
+        :param ckpt:
+        """
 
         self.net = net
         self.criterion = nn.CrossEntropyLoss() if criterion is None else criterion
@@ -95,55 +81,44 @@ class Trainer:
 
         self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters())) if optimizer is None else optimizer
         self.lr_scheduler = lr_scheduler
-        self.logdir = logdir
+
         self.ckpt = ckpt
-        if config is None:
-            self.config = defaultdict(float)
-            self.config['max_val_metric'] = -1e8
 
-        else:
-            import argparse
-
-            self.config = defaultdict(float)
-            if isinstance(config, argparse.Namespace):
-                self.config.update(vars(config))
-            else:
-                self.config = config
-            if 'max_val_metric' not in self.config:
-                self.config['max_val_metric'] = -1e8
+        self.config = defaultdict(float)
+        self.config['max_val_metric'] = -1e8
+        self.config['logdir'] = logdir
+        self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         self.device = torch.device("cpu")
         for param in self.net.parameters():
             self.device = param.device
             break
 
-        if self.logdir is not None:
+        if self.config['logdir'] is not None:
             try:
                 from tensorboardX import SummaryWriter
-                self.logger = SummaryWriter(self.logdir)
+                self.logger = SummaryWriter(self.config['logdir'])
             except ImportError:
                 self.logger = None
         else:
             self.logger = None
 
-        self.epoch = 0
-
-    def save(self):
-        import json
-
-        os.makedirs(os.path.dirname(self.ckpt), exist_ok=True)
+    def save(self, f=None):
+        if f is None:
+            f = self.ckpt
+        os.makedirs(os.path.dirname(f), exist_ok=True)
         if hasattr(self.net, 'module'):
             state_dict = self.net.module.state_dict()
         else:
             state_dict = self.net.state_dict()
-        torch.save(state_dict, self.ckpt)
-        torch.save(self.optimizer.state_dict(), self.ckpt + ".optimizer")
-        with open(self.ckpt + ".config", "w") as f:
-            self.config['current_epoch'] = self.epoch
+        torch.save(state_dict, f)
+        torch.save(self.optimizer.state_dict(), f + ".optimizer")
+        with open(f + ".config", "w") as f:
             json.dump(self.config, f)
 
-    def load(self, f="./ckpt/ckpt.pth"):
-        import json
+    def load(self, f=None):
+        if f is None:
+            f = self.ckpt
 
         if isinstance(self.net, nn.DataParallel):
             self.net.module.load_state_dict(torch.load(f, map_location=self.device))
@@ -154,23 +129,30 @@ class Trainer:
             with open(f + ".config", "r") as fp:
                 dic = json.loads(fp.read())
             self.config = defaultdict(float, dic)
-            if 'current_epoch' in self.config:
-                self.epoch = int(self.config['current_epoch'])
             print("Loaded,", self.config)
 
         if os.path.exists(f + ".optimizer"):
             self.optimizer.load_state_dict(torch.load(f + ".optimizer"))
 
+        if self.config['logdir'] is not None:
+            try:
+                from tensorboardX import SummaryWriter
+                self.logger = SummaryWriter(self.config['logdir'])
+            except ImportError:
+                self.logger = None
+        else:
+            self.logger = None
+
     def train(self, epoch):
         kwarg_list = ['epoch', 'train_loss', 'train_metric',
                       'val loss', 'val metric', 'time']
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
         print_row(kwarg_list=kwarg_list, pad=' ')
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-        for ep in range(self.epoch + 1, self.epoch + epoch + 1):
+        start_epoch = int(self.config['epoch'])
+        for ep in range(start_epoch + 1, start_epoch + epoch + 1):
             start_time = time()
 
             phase = 'train'
@@ -178,7 +160,7 @@ class Trainer:
             phase = 'val'
             val_loss, val_metric = self._train(phase)
 
-            self.epoch += 1
+            self.config['epoch'] += 1
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
                     self.lr_scheduler.step(val_loss)
@@ -193,11 +175,11 @@ class Trainer:
 
             elapsed_time = time() - start_time
             if self.logger is not None:
-                self.logger.add_scalars(f"{timestamp}/loss", {'train' : train_loss,
+                self.logger.add_scalars(f"{self.config['timestamp']}/loss", {'train' : train_loss,
                                                         'val': val_loss}, ep)
-                self.logger.add_scalars(f"{timestamp}/metric", {'train' : train_metric,
+                self.logger.add_scalars(f"{self.config['timestamp']}/metric", {'train' : train_metric,
                                                         'val': val_metric}, ep)
-                self.logger.add_scalar(f"{timestamp}/time", elapsed_time, ep)
+                self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, ep)
 
             print_row(kwarg_list=[ep_str, train_loss, train_metric,
                                   val_loss, val_metric, elapsed_time], pad=' ')

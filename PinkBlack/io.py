@@ -1,22 +1,10 @@
 import sys, os
+from .PinkModule.logging import PinkBlackLogger
+
 try:
     import torch
 except ImportError:
     print("Warning : No pytorch Module is imported, Some functions may raise errors.", file=sys.stderr)
-
-
-class PinkBlackLogger:
-    def __init__(self, fp, stream=sys.stdout):
-        self.stream = stream
-        self.fp = fp
-
-    def write(self, message):
-        self.fp.write(message.replace("\r", "\n"))
-        self.fp.flush()
-        self.stream.write(message)
-
-    def flush(self):
-        self.stream.flush()
 
 
 def convert_type(string:str):
@@ -107,17 +95,23 @@ def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolo
     if autolog:
         import time, datetime
         dt = datetime.datetime.fromtimestamp(time.time())
-        dt = datetime.datetime.strftime(dt, '{}_%Y%m%d_%H%M%S.log'.format(os.path.basename(sys.argv[0])))
-        logdir = autolog_dir
+        dt = datetime.datetime.strftime(dt, f'{os.path.basename(sys.argv[0])}_%Y%m%d_%H%M%S.log')
 
-        if not os.path.exists(logdir):
-            os.mkdir(logdir)
+        if hasattr(args, "ckpt"):
+            logpath = args.ckpt + "_" + dt
+        else:
+            logpath = os.path.join(autolog_dir, dt)
 
-        fp = open(os.path.join(logdir, dt), "w")
+        os.makedirs(os.path.dirname(logpath), exist_ok=True)
+
+        fp = open(logpath, "w")
         sys.stdout = PinkBlackLogger(fp, sys.stdout)
         sys.stderr = PinkBlackLogger(fp, sys.stderr)
+        print("PinkBlack :: args :", args)
 
     return args
+
+
 
 
 def set_seeds(seed, strict=False):
@@ -137,61 +131,6 @@ def set_seeds(seed, strict=False):
             torch.backends.cudnn.deterministic = True
     np.random.seed(seed)
     random.seed(seed)
-
-
-def load_checkpoint(net, path, optimizer=None):
-    """
-    :param net: nn.Module
-    :param path: "/data/checkpoint/module.pth"
-    :param optimizer: Optional
-    :return: net, path, optimizer(if it exists)
-    """
-
-    saved_dict = torch.load(path)
-
-    if 'state_dict' in saved_dict:
-        net.load_state_dict(saved_dict['state_dict'])
-        del saved_dict['state_dict']
-    elif 'net.state_dict' in saved_dict:
-        net.load_state_dict(saved_dict['net.state_dict'])
-        del saved_dict['net.state_dict']
-    else:
-        raise ValueError("No networks are saved in the checkpoint file.")
-
-    if optimizer is not None and 'optimizer.state_dict' in saved_dict:
-        optimizer.load_state_dict(saved_dict['optimizer.state_dict'])
-        del saved_dict['optimizer.state_dict']
-
-    if optimizer is None and 'optimizer.state_dict' in saved_dict:
-        del saved_dict['optimizer.state_dict']
-
-    print("Loaded", saved_dict)
-    if optimizer is None:
-        return net, saved_dict
-    else:
-        return net, saved_dict, optimizer
-
-
-load_model = load_checkpoint
-
-
-def save_checkpoint(obj, path):
-    """
-    :param obj: dict or nn.Module
-    :param path: path to save
-    """
-    if isinstance(obj, dict):
-        torch.save(obj, path)
-    elif isinstance(obj, torch.nn.Module):
-        if hasattr(obj, 'module'):
-            save_dict = {'state_dict': obj.module.state_dict()}
-        else:
-            save_dict = {'state_dict': obj.state_dict()}
-        torch.save(save_dict)
-    else:
-        raise NotImplementedError
-
-save_model = save_checkpoint
 
 
 if __name__ == "__main__":
