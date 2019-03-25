@@ -40,7 +40,7 @@ class FAN3D(object):
     def get_landmarks(self, img: np.ndarray, boxes: np.ndarray):
         # imgs: [H, W, 3]
         # boxes: cropped for face region
-        boxes = np.array
+        boxes = np.array(boxes)
         assert (len(img.shape) == 3)
         assert (img.shape[2] == 3)
 
