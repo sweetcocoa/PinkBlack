@@ -156,33 +156,33 @@ class Trainer:
             start_time = time()
 
             phase = 'train'
-            train_loss, train_metric = self._train(phase)
+            self.config['train_loss'], self.config['train_metric'] = self._train(phase)
             phase = 'val'
-            val_loss, val_metric = self._train(phase)
+            self.config['val_loss'], self.config['val_metric'] = self._train(phase)
 
             self.config['epoch'] += 1
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
-                    self.lr_scheduler.step(val_loss)
+                    self.lr_scheduler.step(self.config['val_loss'])
                 else:
                     self.lr_scheduler.step()
 
             ep_str = str(ep)
-            if self.config['max_val_metric'] < val_metric:
-                self.config['max_val_metric'] = val_metric
+            if self.config['max_val_metric'] < self.config['val_metric']:
+                self.config['max_val_metric'] = self.config['val_metric']
                 self.save()
                 ep_str = (str(ep)) + '-best'
 
             elapsed_time = time() - start_time
             if self.logger is not None:
-                self.logger.add_scalars(f"{self.config['timestamp']}/loss", {'train' : train_loss,
-                                                        'val': val_loss}, ep)
-                self.logger.add_scalars(f"{self.config['timestamp']}/metric", {'train' : train_metric,
-                                                        'val': val_metric}, ep)
+                self.logger.add_scalars(f"{self.config['timestamp']}/loss", {'train' : self.config['train_loss'],
+                                                        'val': self.config['val_loss']}, ep)
+                self.logger.add_scalars(f"{self.config['timestamp']}/metric", {'train' : self.config['train_metric'],
+                                                        'val': self.config['val_metric']}, ep)
                 self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, ep)
 
-            print_row(kwarg_list=[ep_str, train_loss, train_metric,
-                                  val_loss, val_metric, elapsed_time], pad=' ')
+            print_row(kwarg_list=[ep_str, self.config['train_loss'], self.config['train_metric'],
+                                  self.config['val_loss'], self.config['val_metric'], elapsed_time], pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
     def _train(self, phase):
