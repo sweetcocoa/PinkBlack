@@ -143,7 +143,7 @@ class Trainer:
         else:
             self.logger = None
 
-    def train(self, epoch):
+    def train(self, epoch, phases=['train', 'val']):
         kwarg_list = ['epoch', 'train_loss', 'train_metric',
                       'val loss', 'val metric', 'time']
 
@@ -155,10 +155,8 @@ class Trainer:
         for ep in range(start_epoch + 1, start_epoch + epoch + 1):
             start_time = time()
 
-            phase = 'train'
-            self.config['train_loss'], self.config['train_metric'] = self._train(phase)
-            phase = 'val'
-            self.config['val_loss'], self.config['val_metric'] = self._train(phase)
+            for phase in phases:
+                self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase)
 
             self.config['epoch'] += 1
             if self.lr_scheduler is not None:
