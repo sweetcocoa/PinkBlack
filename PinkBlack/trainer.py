@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from torch.nn.utils import clip_grad_norm_
+
 from tqdm import tqdm
 from time import time
 from datetime import datetime
@@ -52,6 +54,7 @@ class Trainer:
                  lr_scheduler=None,
                  logdir="./pinkblack_autolog/",
                  ckpt="./ckpt/ckpt.pth",
+                 clip_gradient_norm=False,
                  ):
         """
         :param net: nn.Module Network. __call__(*batch_x)
@@ -88,6 +91,7 @@ class Trainer:
         self.config['max_val_metric'] = -1e8
         self.config['logdir'] = logdir
         self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.config['clip_gradient_norm'] = clip_gradient_norm
 
         self.device = torch.device("cpu")
         for param in self.net.parameters():
@@ -215,6 +219,9 @@ class Trainer:
                 if phase == "train":
                     loss.backward()
                     self.optimizer.step()
+
+                    if self.config['clip_gradient_norm']:
+                        clip_grad_norm_(self.net.parameters(), self.config['clip_gradient_norm'])
 
             with torch.no_grad():
                 metric = self.metric(outputs, *batch_y)

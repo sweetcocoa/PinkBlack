@@ -13,8 +13,12 @@ class FAN3D(object):
         self.net.eval()
 
     def get_landmarks_batch(self, imgs: np.ndarray, boxes: np.ndarray):
-        # imgs: [N, H, W, 3]
-        # boxes: cropped for face region
+        """
+        :param imgs: [N, H, W, 3]
+        :param boxes: cropped for face region
+        :return:
+        """
+
         assert (len(imgs.shape) == 4)
         assert (imgs.shape[3] == 3)
 
@@ -35,12 +39,16 @@ class FAN3D(object):
         heatmap = heatmaps[-1].cpu()
 
         _, points = get_preds_fromhm(heatmap, center, scale)
-        return points.numpy()  # [N, 2]
+        return points.numpy()  # [N, 68, 2]
 
-    def get_landmarks(self, img: np.ndarray, boxes: np.ndarray):
-        # imgs: [H, W, 3]
-        # boxes: cropped for face region
-        boxes = np.array(boxes)
+    def get_landmarks(self, img: np.ndarray, box: np.ndarray):
+        """
+        :param img: imgs: [H, W, 3]
+        :param box: cropped for face region [x1, y1, x2, y2, confidence]
+        :return:
+        """
+
+        boxes = np.array(box)
         assert (len(img.shape) == 3)
         assert (img.shape[2] == 3)
 
@@ -64,7 +72,7 @@ class FAN3D(object):
         heatmap = heatmaps[-1].cpu()
 
         _, points = get_preds_fromhm(heatmap, center, scale)
-        return points.numpy()  # [N, 2]
+        return points.numpy().squeeze()  # [68, 2]
 
     @staticmethod
     def get_tr(fov, ldmk, sz):
