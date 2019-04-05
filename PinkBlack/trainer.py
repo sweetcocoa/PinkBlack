@@ -147,87 +147,115 @@ class Trainer:
         else:
             self.logger = None
 
-    def train(self, epoch, phases=['train', 'val']):
-        kwarg_list = ['epoch', 'train_loss', 'train_metric',
+    def train(self, epoch,
+              phases=['train', 'val'],
+              step=0,
+              validation_interval=1):
+
+        train_unit = 'epoch' if step <= 0 else 'step'
+        num_unit = epoch if step <= 0 else step
+        validation_interval = 1 if validation_interval <= 0 else validation_interval
+
+        kwarg_list = [train_unit, 'train_loss', 'train_metric',
                       'val loss', 'val metric', 'time']
 
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
         print_row(kwarg_list=kwarg_list, pad=' ')
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-        start_epoch = int(self.config['epoch'])
-        for ep in range(start_epoch + 1, start_epoch + epoch + 1):
-            start_time = time()
+        start = int(self.config[train_unit])
+ 
+        start_time = time()
+        for i in range(start + 1, start + num_unit + 1, validation_interval):
 
-            for phase in phases:
-                self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase)
+            if train_unit == "epoch":
+                for phase in phases:
+                    self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
+                self.config[train_unit] += 1
+            else:
+                phase = "train"
+                num_steps = min((start + num_unit + 1 - i), validation_interval)
+                self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=num_steps)
+                self.config[train_unit] += num_steps
 
-            self.config['epoch'] += 1
+                phase = 'val'
+                self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
+
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
                     self.lr_scheduler.step(self.config['val_loss'])
                 else:
                     self.lr_scheduler.step()
 
-            ep_str = str(ep)
+            i_str = str(self.config[train_unit])
             if self.config['max_val_metric'] < self.config['val_metric']:
                 self.config['max_val_metric'] = self.config['val_metric']
-                self.save()
-                ep_str = (str(ep)) + '-best'
+                self.save(self.ckpt)
+                i_str = (str(i)) + '-best'
 
             elapsed_time = time() - start_time
             if self.logger is not None:
                 self.logger.add_scalars(f"{self.config['timestamp']}/loss", {'train' : self.config['train_loss'],
-                                                        'val': self.config['val_loss']}, ep)
+                                                                             'val': self.config['val_loss']}, i)
                 self.logger.add_scalars(f"{self.config['timestamp']}/metric", {'train' : self.config['train_metric'],
-                                                        'val': self.config['val_metric']}, ep)
-                self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, ep)
+                                                                               'val': self.config['val_metric']}, i)
+                self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, i)
 
-            print_row(kwarg_list=[ep_str, self.config['train_loss'], self.config['train_metric'],
+            print_row(kwarg_list=[i_str, self.config['train_loss'], self.config['train_metric'],
                                   self.config['val_loss'], self.config['val_metric'], elapsed_time], pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-    def _train(self, phase):
+    def _step(self, phase, iterator):
+        batch_x, batch_y = next(iterator)
+
+        self.optimizer.zero_grad()
+
+        if isinstance(batch_x, list):
+            batch_x = [x.to(self.device) for x in batch_x]
+        else:
+            batch_x = [batch_x.to(self.device)]
+
+        if isinstance(batch_y, list):
+            batch_y = [y.to(self.device) for y in batch_y]
+        else:
+            batch_y = [batch_y.to(self.device)]
+
+        with torch.set_grad_enabled(phase == "train"):
+            outputs = self.net(*batch_x)
+            loss = self.criterion(outputs, *batch_y)
+
+            if phase == "train":
+                loss.backward()
+                self.optimizer.step()
+
+                if self.config['clip_gradient_norm']:
+                    clip_grad_norm_(self.net.parameters(), self.config['clip_gradient_norm'])
+
+        with torch.no_grad():
+            metric = self.metric(outputs, *batch_y)
+
+        return {'loss': loss.item(),
+                'batch_size': batch_x[0].size(0),
+                'metric': metric.item()}
+
+    def _train(self, phase, num_steps=0):
 
         running_loss = AverageMeter()
         running_metric = AverageMeter()
 
         if phase == 'train':
             self.net.train()
-            dataloader = self.dataloader['train']
         elif phase == "val":
             self.net.eval()
-            dataloader = self.dataloader['val']
 
-        for batch_x, batch_y in tqdm(dataloader, leave=False):
-            self.optimizer.zero_grad()
-
-            if isinstance(batch_x, list):
-                batch_x = [x.to(self.device) for x in batch_x]
-            else:
-                batch_x = [batch_x.to(self.device)]
-
-            if isinstance(batch_y, list):
-                batch_y = [y.to(self.device) for y in batch_y]
-            else:
-                batch_y = [batch_y.to(self.device)]
-
-            with torch.set_grad_enabled(phase == "train"):
-                outputs = self.net(*batch_x)
-                loss = self.criterion(outputs, *batch_y)
-
-                if phase == "train":
-                    loss.backward()
-                    self.optimizer.step()
-
-                    if self.config['clip_gradient_norm']:
-                        clip_grad_norm_(self.net.parameters(), self.config['clip_gradient_norm'])
-
-            with torch.no_grad():
-                metric = self.metric(outputs, *batch_y)
-
-            running_loss.update(loss.item(), batch_x[0].size(0))
-            running_metric.update(metric.item(), batch_x[0].size(0))
+        dataloader = self.dataloader[phase]
+        step_iterator = iter(dataloader)
+        for st in tqdm(range(num_steps), leave=False):
+            if (st + 1) % len(dataloader) == 0:
+                step_iterator = iter(dataloader)
+            results = self._step(phase=phase, iterator=step_iterator)
+            running_loss.update(results['loss'], results['batch_size'])
+            running_metric.update(results['metric'], results['batch_size'])
 
         return running_loss.avg, running_metric.avg
 
