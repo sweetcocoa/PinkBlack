@@ -165,21 +165,21 @@ class Trainer:
 
         start = int(self.config[train_unit])
  
-        start_time = time()
-        for i in range(start + 1, start + num_unit + 1, validation_interval):
 
+        for i in range(start + 1, start + num_unit + 1, validation_interval):
+            start_time = time()
             if train_unit == "epoch":
                 for phase in phases:
                     self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
                 self.config[train_unit] += 1
             else:
-                phase = "train"
-                num_steps = min((start + num_unit + 1 - i), validation_interval)
-                self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=num_steps)
-                self.config[train_unit] += num_steps
-
-                phase = 'val'
-                self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
+                for phase in phases:
+                    if phase == "train":
+                        num_steps = min((start + num_unit + 1 - i), validation_interval)
+                        self.config[train_unit] += num_steps
+                    else:  # phase == "val":
+                        num_steps = len(self.dataloader[phase])
+                    self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=num_steps)
 
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
