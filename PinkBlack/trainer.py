@@ -226,10 +226,10 @@ class Trainer:
 
             if phase == "train":
                 loss.backward()
-                self.optimizer.step()
-
                 if self.config['clip_gradient_norm']:
                     clip_grad_norm_(self.net.parameters(), self.config['clip_gradient_norm'])
+                self.optimizer.step()
+
 
         with torch.no_grad():
             metric = self.metric(outputs, *batch_y)
