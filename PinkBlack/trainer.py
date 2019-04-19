@@ -55,6 +55,7 @@ class Trainer:
                  logdir="./pinkblack_autolog/",
                  ckpt="./ckpt/ckpt.pth",
                  clip_gradient_norm=False,
+                 is_data_dict=False,
                  ):
         """
         :param net: nn.Module Network. __call__(*batch_x)
@@ -92,6 +93,7 @@ class Trainer:
         self.config['logdir'] = logdir
         self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.config['clip_gradient_norm'] = clip_gradient_norm
+        self.config['is_data_dict'] = is_data_dict
 
         self.device = torch.device("cpu")
         for param in self.net.parameters():
@@ -111,7 +113,7 @@ class Trainer:
         if f is None:
             f = self.ckpt
         os.makedirs(os.path.dirname(f), exist_ok=True)
-        if hasattr(self.net, 'module'):
+        if isinstance(self.net, nn.DataParallel):
             state_dict = self.net.module.state_dict()
         else:
             state_dict = self.net.state_dict()
@@ -164,7 +166,6 @@ class Trainer:
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
         start = int(self.config[train_unit])
- 
 
         for i in range(start + 1, start + num_unit + 1, validation_interval):
             start_time = time()
@@ -206,23 +207,33 @@ class Trainer:
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
     def _step(self, phase, iterator):
-        batch_x, batch_y = next(iterator)
+        if self.config['is_data_dict']:
+            batch_dict = next(iterator)
+            batch_size = batch_dict[list(batch_dict.keys())[0]].size(0)
+        else:
+            batch_x, batch_y = next(iterator)
+
+            if isinstance(batch_x, list):
+                batch_x = [x.to(self.device) for x in batch_x]
+            else:
+                batch_x = [batch_x.to(self.device)]
+
+            if isinstance(batch_y, list):
+                batch_y = [y.to(self.device) for y in batch_y]
+            else:
+                batch_y = [batch_y.to(self.device)]
+
+            batch_size = batch_x[0].size(0)
 
         self.optimizer.zero_grad()
-
-        if isinstance(batch_x, list):
-            batch_x = [x.to(self.device) for x in batch_x]
-        else:
-            batch_x = [batch_x.to(self.device)]
-
-        if isinstance(batch_y, list):
-            batch_y = [y.to(self.device) for y in batch_y]
-        else:
-            batch_y = [batch_y.to(self.device)]
-
         with torch.set_grad_enabled(phase == "train"):
-            outputs = self.net(*batch_x)
-            loss = self.criterion(outputs, *batch_y)
+
+            if self.config['is_data_dict']:
+                outputs = self.net(batch_dict)
+                loss = self.criterion(outputs, batch_dict)
+            else:
+                outputs = self.net(*batch_x)
+                loss = self.criterion(outputs, *batch_y)
 
             if phase == "train":
                 loss.backward()
@@ -230,12 +241,14 @@ class Trainer:
                     clip_grad_norm_(self.net.parameters(), self.config['clip_gradient_norm'])
                 self.optimizer.step()
 
-
         with torch.no_grad():
-            metric = self.metric(outputs, *batch_y)
+            if self.config['is_data_dict']:
+                metric = self.metric(outputs, batch_dict)
+            else:
+                metric = self.metric(outputs, *batch_y)
 
         return {'loss': loss.item(),
-                'batch_size': batch_x[0].size(0),
+                'batch_size': batch_size,
                 'metric': metric.item()}
 
     def _train(self, phase, num_steps=0):
