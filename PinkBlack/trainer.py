@@ -13,7 +13,7 @@ import os
 import json
 
 from .PinkModule.logging import *
-
+import pandas as pd
 
 class AverageMeter(object):
     """Computes and stores the average and current value
@@ -47,9 +47,9 @@ class Trainer:
     def __init__(self, net,
                  criterion=None,
                  metric=cal_accuracy,
-                 dataloader=None,
                  train_dataloader=None,
                  val_dataloader=None,
+                 test_dataloader=None,
                  optimizer=None,
                  lr_scheduler=None,
                  logdir="./pinkblack_autolog/",
@@ -62,7 +62,6 @@ class Trainer:
         :param criterion: loss function. __call__(prediction, *batch_y)
         :param metric: metric function __call__(prediction, *batch_y).
         *note* : bigger is better.
-        :param dataloader: 'train':train_dataloader, 'val':val_dataloader
         :param train_dataloader:
         :param val_dataloader:
         :param optimizer: optimizer (torch.optim)
@@ -75,13 +74,14 @@ class Trainer:
         self.criterion = nn.CrossEntropyLoss() if criterion is None else criterion
         self.metric = metric
 
-        if dataloader is not None and isinstance(dataloader, dict):
-            self.dataloader = dataloader
-        elif train_dataloader is not None and val_dataloader is not None:
+        if train_dataloader is not None and val_dataloader is not None:
             self.dataloader = {'train': train_dataloader,
-                               'val': val_dataloader}
+                               'val': val_dataloader,
+                               'test': test_dataloader}
         else:
             raise RuntimeError("Init Trainer :: Two dataloaders are needed!")
+
+
 
         self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters())) if optimizer is None else optimizer
         self.lr_scheduler = lr_scheduler
@@ -89,7 +89,9 @@ class Trainer:
         self.ckpt = ckpt
 
         self.config = defaultdict(float)
+        self.config['max_train_metric'] = -1e8
         self.config['max_val_metric'] = -1e8
+        self.config['max_test_metric'] = -1e8
         self.config['logdir'] = logdir
         self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.config['clip_gradient_norm'] = clip_gradient_norm
@@ -154,12 +156,25 @@ class Trainer:
               step=0,
               validation_interval=1):
 
+        """
+        :param epoch: train dataloader를 순회할 횟수
+        :param phases: ['train', 'val', 'test'] 중 필요하지 않은 phase를 뺄 수 있다.
+        >> trainer.train(1, phases=['val'])
+        ... validation without training ...
+
+        :param step: epoch이 아닌 step을 훈련단위로 할 때. step > 0 이면 epoch값은 무시된다.
+        :param validation_interval: step이 훈련단위일때 validation 간격
+        :return:
+        """
+
         train_unit = 'epoch' if step <= 0 else 'step'
         num_unit = epoch if step <= 0 else step
         validation_interval = 1 if validation_interval <= 0 else validation_interval
 
-        kwarg_list = [train_unit, 'train_loss', 'train_metric',
-                      'val loss', 'val metric', 'time']
+        kwarg_list = [train_unit]
+        for phase in phases:
+            kwarg_list += [f"{phase}_loss", f"{phase}_metric"]
+        kwarg_list += ['time']
 
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
         print_row(kwarg_list=kwarg_list, pad=' ')
@@ -196,20 +211,30 @@ class Trainer:
 
             elapsed_time = time() - start_time
             if self.logger is not None:
-                self.logger.add_scalars(f"{self.config['timestamp']}/loss", {'train' : self.config['train_loss'],
-                                                                             'val': self.config['val_loss']}, i)
-                self.logger.add_scalars(f"{self.config['timestamp']}/metric", {'train' : self.config['train_metric'],
-                                                                               'val': self.config['val_metric']}, i)
+                _loss, _metric = {}, {}
+                for phase in phases:
+                    _loss[phase] = self.config[f"{phase}_loss"]
+                    _metric[phase] = self.config[f"{phase}_metric"]
+
+                self.logger.add_scalars(f"{self.config['timestamp']}/loss", _loss, i)
+                self.logger.add_scalars(f"{self.config['timestamp']}/metric", _metric, i)
                 self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, i)
 
-            print_row(kwarg_list=[i_str, self.config['train_loss'], self.config['train_metric'],
-                                  self.config['val_loss'], self.config['val_metric'], elapsed_time], pad=' ')
+            print_kwarg = [i_str]
+            for phase in phases:
+                print_kwarg += [self.config[f'{phase}_loss'], self.config[f'{phase}_metric']]
+            print_kwarg += [elapsed_time]
+
+            print_row(kwarg_list=print_kwarg, pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
     def _step(self, phase, iterator):
         if self.config['is_data_dict']:
             batch_dict = next(iterator)
             batch_size = batch_dict[list(batch_dict.keys())[0]].size(0)
+            for k, v in batch_dict.items():
+                batch_dict[k] = v.cuda()
+
         else:
             batch_x, batch_y = next(iterator)
 
