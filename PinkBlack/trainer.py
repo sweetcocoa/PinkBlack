@@ -13,6 +13,7 @@ import os
 import json
 
 from .PinkModule.logging import *
+from .PinkModule.swa_batchnorm_utils import *
 import pandas as pd
 
 class AverageMeter(object):
@@ -41,6 +42,8 @@ def cal_accuracy(pred, target):
     pred = torch.max(pred, 1)[1]
     corrects = torch.sum(pred == target).float()
     return corrects / pred.size(0)
+
+
 
 
 class Trainer:
@@ -233,7 +236,7 @@ class Trainer:
             batch_dict = next(iterator)
             batch_size = batch_dict[list(batch_dict.keys())[0]].size(0)
             for k, v in batch_dict.items():
-                batch_dict[k] = v.cuda()
+                batch_dict[k] = v.to(self.device)
 
         else:
             batch_x, batch_y = next(iterator)
@@ -296,6 +299,51 @@ class Trainer:
             running_metric.update(results['metric'], results['batch_size'])
 
         return running_loss.avg, running_metric.avg
+
+    def swa_apply(self, bn_update=False):
+        assert hasattr(self.optimizer, "swap_swa_sgd")
+        self.optimizer.swap_swa_sgd()
+        if bn_update:
+            self.swa_bn_update()
+
+    def swa_bn_update(self):
+        r"""Updates BatchNorm running_mean, running_var buffers in the model.
+
+        It performs one pass over data in `loader` to estimate the activation
+        statistics for BatchNorm layers in the model.
+
+        original source is from : torchcontrib
+        """
+        if not check_bn(self.net):
+            return
+        was_training = self.net.training
+        self.net.train()
+        momenta = {}
+        self.net.apply(reset_bn)
+        self.net.apply(lambda module: get_momenta(module, momenta))
+        n = 0
+        for input in self.dataloader['train']:
+            if isinstance(input, (list, tuple)):
+                input = input[0]
+                b = input.size(0)
+                input = input.to(self.device)
+            elif self.config['is_data_dict']:
+                b = input[list(input.keys())[0]].size(0)
+                for k, v in input.items():
+                    input[k] = v.to(self.device)
+            else:
+                b = input.size(0)
+                input = input.to(self.device)
+
+            momentum = b / float(n + b)
+            for module in momenta.keys():
+                module.momentum = momentum
+
+            self.net(input)
+            n += b
+
+        self.net.apply(lambda module: set_momenta(module, momenta))
+        self.net.train(was_training)
 
 if __name__ == "__main__":
     # demo.py
