@@ -44,8 +44,6 @@ def cal_accuracy(pred, target):
     return corrects / pred.size(0)
 
 
-
-
 class Trainer:
     def __init__(self, net,
                  criterion=None,
@@ -77,14 +75,17 @@ class Trainer:
         self.criterion = nn.CrossEntropyLoss() if criterion is None else criterion
         self.metric = metric
 
-        if train_dataloader is not None and val_dataloader is not None:
-            self.dataloader = {'train': train_dataloader,
-                               'val': val_dataloader,
-                               'test': test_dataloader}
-        else:
-            raise RuntimeError("Init Trainer :: Two dataloaders are needed!")
+        self.dataloader = dict()
+        if train_dataloader is not None:
+            self.dataloader['train'] = train_dataloader
+        if val_dataloader is not None:
+            self.dataloader['val'] = val_dataloader
+        if test_dataloader is not None:
+            self.dataloader['test'] = test_dataloader
 
-
+        if train_dataloader is None or val_dataloader is None:
+            import warnings
+            warnings.warn("Warning :: Init Trainer :: Two dataloaders are needed!")
 
         self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters())) if optimizer is None else optimizer
         self.lr_scheduler = lr_scheduler
@@ -99,6 +100,8 @@ class Trainer:
         self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.config['clip_gradient_norm'] = clip_gradient_norm
         self.config['is_data_dict'] = is_data_dict
+
+        self.dataframe = pd.DataFrame()
 
         self.device = torch.device("cpu")
         for param in self.net.parameters():
@@ -124,8 +127,10 @@ class Trainer:
             state_dict = self.net.state_dict()
         torch.save(state_dict, f)
         torch.save(self.optimizer.state_dict(), f + ".optimizer")
-        with open(f + ".config", "w") as f:
-            json.dump(self.config, f)
+        with open(f + ".config", "w") as fp:
+            json.dump(self.config, fp)
+
+        self.dataframe.to_csv(f + ".csv", float_format="%.4f", index=False)
 
     def load(self, f=None):
         if f is None:
@@ -145,6 +150,9 @@ class Trainer:
         if os.path.exists(f + ".optimizer"):
             self.optimizer.load_state_dict(torch.load(f + ".optimizer"))
 
+        if os.path.exists(f + ".csv"):
+            self.dataframe = pd.read_csv(f + ".csv")
+
         if self.config['logdir'] is not None:
             try:
                 from tensorboardX import SummaryWriter
@@ -154,9 +162,9 @@ class Trainer:
         else:
             self.logger = None
 
-    def train(self, epoch,
-              phases=['train', 'val'],
-              step=0,
+    def train(self, epoch=None,
+              phases=None,
+              step=None,
               validation_interval=1):
 
         """
@@ -165,19 +173,24 @@ class Trainer:
         >> trainer.train(1, phases=['val'])
         ... validation without training ...
 
-        :param step: epoch이 아닌 step을 훈련단위로 할 때. step > 0 이면 epoch값은 무시된다.
+        :param step: epoch이 아닌 step을 훈련단위로 할 때의 총 step 수.
         :param validation_interval: step이 훈련단위일때 validation 간격
-        :return:
+        :return: None
         """
+        if phases is None:
+            phases = list(self.dataloader.keys())
 
-        train_unit = 'epoch' if step <= 0 else 'step'
-        num_unit = epoch if step <= 0 else step
+        if epoch is None and step is None:
+            raise ValueError("PinkBlack.trainer :: epoch or step should be specified.")
+
+        train_unit = 'epoch' if step is None else 'step'
+        num_unit = epoch if step is None else step
         validation_interval = 1 if validation_interval <= 0 else validation_interval
 
         kwarg_list = [train_unit]
         for phase in phases:
             kwarg_list += [f"{phase}_loss", f"{phase}_metric"]
-        kwarg_list += ['time']
+        kwarg_list += ['lr', 'time']
 
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
         print_row(kwarg_list=kwarg_list, pad=' ')
@@ -207,9 +220,9 @@ class Trainer:
                     self.lr_scheduler.step()
 
             i_str = str(self.config[train_unit])
-            if self.config['max_val_metric'] < self.config['val_metric']:
+            is_best = self.config['max_val_metric'] < self.config['val_metric']
+            if is_best:
                 self.config['max_val_metric'] = self.config['val_metric']
-                self.save(self.ckpt)
                 i_str = (str(i)) + '-best'
 
             elapsed_time = time() - start_time
@@ -226,10 +239,14 @@ class Trainer:
             print_kwarg = [i_str]
             for phase in phases:
                 print_kwarg += [self.config[f'{phase}_loss'], self.config[f'{phase}_metric']]
-            print_kwarg += [elapsed_time]
+            print_kwarg += [self.optimizer.param_groups[0]['lr'], elapsed_time]
 
             print_row(kwarg_list=print_kwarg, pad=' ')
             print_row(kwarg_list=['']*len(kwarg_list), pad='-')
+            self.dataframe = self.dataframe.append(dict(zip(kwarg_list, print_kwarg)), ignore_index=True)
+
+            if is_best:
+                self.save(self.ckpt)
 
     def _step(self, phase, iterator):
         if self.config['is_data_dict']:
@@ -356,6 +373,7 @@ if __name__ == "__main__":
     from torchvision import datasets, transforms
     from tensorboardX import SummaryWriter
     import torch.nn.functional as F
+    from PinkBlack.trainer import *
 
     class Net(nn.Module):
         def __init__(self):
@@ -367,7 +385,7 @@ if __name__ == "__main__":
             self.fc2 = nn.Linear(50, 10)
 
         def forward(self, x):
-            x = F.relu(F.max_pool2d(self.conv1(x), 2))  
+            x = F.relu(F.max_pool2d(self.conv1(x), 2))
             x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
             x = x.view(-1, 320)
             x = F.relu(self.fc1(x))
@@ -388,4 +406,4 @@ if __name__ == "__main__":
     test_dataloader = DataLoader(test_dataset, pin_memory=True, num_workers=4, batch_size=32, shuffle=True)
 
     trainer = Trainer(resnet18, train_dataloader=train_dataloader, val_dataloader=test_dataloader)
-    trainer.new_train(10)
+    trainer.train(10)
