@@ -215,7 +215,7 @@ class Trainer:
 
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
-                    self.lr_scheduler.step(self.config['val_loss'])
+                    self.lr_scheduler.step(self.config['val_metric'])
                 else:
                     self.lr_scheduler.step()
 
