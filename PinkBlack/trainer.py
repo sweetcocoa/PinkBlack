@@ -14,6 +14,7 @@ import json
 
 from .PinkModule.logging import *
 from .PinkModule.swa_batchnorm_utils import *
+import logging
 import pandas as pd
 
 class AverageMeter(object):
@@ -84,8 +85,7 @@ class Trainer:
             self.dataloader['test'] = test_dataloader
 
         if train_dataloader is None or val_dataloader is None:
-            import warnings
-            warnings.warn("Warning :: Init Trainer :: Two dataloaders are needed!")
+            logging.warning("Init Trainer :: Two dataloaders are needed!")
 
         self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters())) if optimizer is None else optimizer
         self.lr_scheduler = lr_scheduler
@@ -107,6 +107,9 @@ class Trainer:
         for param in self.net.parameters():
             self.device = param.device
             break
+
+        if self.device == torch.device("cpu"):
+            logging.warning("Init Trainer :: Do you really want to train the network on CPU instead of CUDA?")
 
         if self.config['logdir'] is not None:
             try:
@@ -165,7 +168,8 @@ class Trainer:
     def train(self, epoch=None,
               phases=None,
               step=None,
-              validation_interval=1):
+              validation_interval=1,
+              save_every_validation=False):
 
         """
         :param epoch: train dataloader를 순회할 횟수
@@ -175,6 +179,7 @@ class Trainer:
 
         :param step: epoch이 아닌 step을 훈련단위로 할 때의 총 step 수.
         :param validation_interval: step이 훈련단위일때 validation 간격
+        :param save_every_validation: True이면, validation마다 checkpoint를 저장한다.
         :return: None
         """
         if phases is None:
@@ -222,8 +227,10 @@ class Trainer:
             i_str = str(self.config[train_unit])
             is_best = self.config['max_val_metric'] < self.config['val_metric']
             if is_best:
-                self.config['max_val_metric'] = self.config['val_metric']
-                i_str = (str(i)) + '-best'
+                for phase in phases:
+                    self.config[f'max_{phase}_metric'] = max(self.config[f'max_{phase}_metric'],
+                                                             self.config[f"{phase}_metric"])
+                i_str = (str(self.config[train_unit])) + '-best'
 
             elapsed_time = time() - start_time
             if self.logger is not None:
@@ -235,6 +242,7 @@ class Trainer:
                 self.logger.add_scalars(f"{self.config['timestamp']}/loss", _loss, i)
                 self.logger.add_scalars(f"{self.config['timestamp']}/metric", _metric, i)
                 self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, i)
+                self.logger.add_scalar(f"{self.config['timestamp']}/lr", self.optimizer.param_groups[0]['lr'], i)
 
             print_kwarg = [i_str]
             for phase in phases:
@@ -248,7 +256,10 @@ class Trainer:
             if is_best:
                 self.save(self.ckpt)
 
-    def _step(self, phase, iterator):
+            if save_every_validation:
+                self.save(self.ckpt + f"-{self.config[train_unit]}")
+
+    def _step(self, phase, iterator, only_inference=False):
         if self.config['is_data_dict']:
             batch_dict = next(iterator)
             batch_size = batch_dict[list(batch_dict.keys())[0]].size(0)
@@ -275,10 +286,15 @@ class Trainer:
 
             if self.config['is_data_dict']:
                 outputs = self.net(batch_dict)
-                loss = self.criterion(outputs, batch_dict)
+                if not only_inference:
+                    loss = self.criterion(outputs, batch_dict)
             else:
                 outputs = self.net(*batch_x)
-                loss = self.criterion(outputs, *batch_y)
+                if not only_inference:
+                    loss = self.criterion(outputs, *batch_y)
+
+            if only_inference:
+                return outputs
 
             if phase == "train":
                 loss.backward()
@@ -295,6 +311,7 @@ class Trainer:
         return {'loss': loss.item(),
                 'batch_size': batch_size,
                 'metric': metric.item()}
+
 
     def _train(self, phase, num_steps=0):
 
@@ -317,7 +334,23 @@ class Trainer:
 
         return running_loss.avg, running_metric.avg
 
-    def swa_apply(self, bn_update=False):
+    def eval(self, dataloader=None):
+        self.net.eval()
+        if dataloader is None:
+            dataloader = self.dataloader['val']
+            phase = "val"
+
+        output_list = []
+        step_iterator = iter(dataloader)
+        num_steps = len(dataloader)
+        for st in tqdm(range(num_steps), leave=False):
+            results = self._step(phase="val", iterator=step_iterator, only_inference=True)
+            output_list.append(results)
+
+        output_cat = torch.cat(output_list)
+        return output_cat
+
+    def swa_apply(self, bn_update=True):
         assert hasattr(self.optimizer, "swap_swa_sgd")
         self.optimizer.swap_swa_sgd()
         if bn_update:

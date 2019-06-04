@@ -27,7 +27,14 @@ def get_args(default_args: dict):
 
     for k, v in default_args.items():
         k = k.lower()
-        parser.add_argument(f'--{k}', default=v, help=f'{k} : default:{v}')
+        if isinstance(v, bool):
+            if v is True:
+                parser.add_argument(f'--{k}', help=f'{k} : default:{v}', action='store_false')
+            else:
+                parser.add_argument(f'--{k}', help=f'{k} : default:{v}', action='store_true')
+
+        else:
+            parser.add_argument(f'--{k}', default=v, help=f'{k} : default:{v}')
     args = parser.parse_args()
 
     if args.gpu and "gpu" in default_args.keys():
@@ -37,7 +44,8 @@ def get_args(default_args: dict):
     for k in default_args.keys():
         k = k.lower()
         val = getattr(args, k)
-        setattr(args, k, convert_type(str(val)))
+        if not isinstance(val, bool):
+            setattr(args, k, convert_type(str(val)))
 
     return args
 
