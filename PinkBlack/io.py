@@ -105,21 +105,24 @@ def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolo
         dt = datetime.datetime.fromtimestamp(time.time())
         dt = datetime.datetime.strftime(dt, f'{os.path.basename(sys.argv[0])}_%Y%m%d_%H%M%S.log')
 
-        if hasattr(args, "ckpt"):
+        if args is not None and hasattr(args, "ckpt"):
             logpath = args.ckpt + "_" + dt
         else:
             logpath = os.path.join(autolog_dir, dt)
 
         os.makedirs(os.path.dirname(logpath), exist_ok=True)
 
+        if args is not None:
+            import json
+            with open(logpath[:-4] + ".args", "w") as fp_args:
+                json.dump(args.__dict__, fp_args)
+
         fp = open(logpath, "w")
         sys.stdout = PinkBlackLogger(fp, sys.stdout)
         sys.stderr = PinkBlackLogger(fp, sys.stderr)
-        print("PinkBlack :: args :", args)
+        print("PinkBlack :: args :", args.__dict__)
 
     return args
-
-
 
 
 def set_seeds(seed, strict=False):
