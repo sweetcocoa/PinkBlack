@@ -241,8 +241,8 @@ class Trainer:
 
                 self.logger.add_scalars(f"{self.config['timestamp']}/loss", _loss, i)
                 self.logger.add_scalars(f"{self.config['timestamp']}/metric", _metric, i)
-                self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, i)
-                self.logger.add_scalar(f"{self.config['timestamp']}/lr", self.optimizer.param_groups[0]['lr'], i)
+                self.logger.add_scalars(f"{self.config['timestamp']}/time", elapsed_time, i)
+                self.logger.add_scalars(f"{self.config['timestamp']}/lr", self.optimizer.param_groups[0]['lr'], i)
 
             print_kwarg = [i_str]
             for phase in phases:
@@ -320,7 +320,7 @@ class Trainer:
 
         if phase == 'train':
             self.net.train()
-        elif phase == "val":
+        else: # phase == "val":
             self.net.eval()
 
         dataloader = self.dataloader[phase]
