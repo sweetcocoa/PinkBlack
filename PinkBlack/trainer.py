@@ -2,31 +2,29 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 
 from tqdm import tqdm
 from time import time
+from tensorboardX.writer import SummaryWriter
 from datetime import datetime
 from collections import defaultdict
 
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
 import json
-
-from .PinkModule.logging import *
-from .PinkModule.swa_batchnorm_utils import *
 import logging
 import pandas as pd
 
+from .PinkModule.logging import *
+from .PinkModule.swa_batchnorm_utils import *
+
+
 class AverageMeter(object):
-    """Computes and stores the average and current value
-
-        Original Code :: https://github.com/pytorch/example/mnist
     """
-
+    Computes and stores the average and current value
+    """
     def __init__(self):
-        self.reset()
-
-    def reset(self):
         self.val = 0
         self.avg = 0
         self.sum = 0
@@ -57,19 +55,23 @@ class Trainer:
                  logdir="./pinkblack_autolog/",
                  ckpt="./ckpt/ckpt.pth",
                  clip_gradient_norm=False,
-                 is_data_dict=False,
-                 ):
+                 is_data_dict=False):
         """
-        :param net: nn.Module Network. __call__(*batch_x)
+        :param net: nn.Module Network
         :param criterion: loss function. __call__(prediction, *batch_y)
         :param metric: metric function __call__(prediction, *batch_y).
-        *note* : bigger is better.
+                        *note* : bigger is better. (Early Stopping할 때 metric이 더 큰 값을 선택한다)
+
         :param train_dataloader:
         :param val_dataloader:
-        :param optimizer: optimizer (torch.optim)
+        :param test_dataloader:
+
+        :param optimizer: torch.optim
         :param lr_scheduler:
-        :param logdir: tensorboardX log
+        :param logdir: tensorboard log
         :param ckpt:
+        :param clip_gradient_norm: False or Scalar value (숫자를 입력하면 gradient clipping한다.)
+        :param is_data_dict: whether dataloaders return dict. (dataloader에서 주는 데이터가 dict인지)
         """
 
         self.net = net
@@ -103,20 +105,12 @@ class Trainer:
 
         self.dataframe = pd.DataFrame()
 
-        self.device = torch.device("cpu")
-        for param in self.net.parameters():
-            self.device = param.device
-            break
-
+        self.device = Trainer.get_model_device(self.net)
         if self.device == torch.device("cpu"):
-            logging.warning("Init Trainer :: Do you really want to train the network on CPU instead of CUDA?")
+            logging.warning("Init Trainer :: Do you really want to train the network on CPU instead of GPU?")
 
         if self.config['logdir'] is not None:
-            try:
-                from tensorboardX import SummaryWriter
-                self.logger = SummaryWriter(self.config['logdir'])
-            except ImportError:
-                self.logger = None
+            self.logger = SummaryWriter(self.config['logdir'])
         else:
             self.logger = None
 
@@ -133,7 +127,7 @@ class Trainer:
         with open(f + ".config", "w") as fp:
             json.dump(self.config, fp)
 
-        self.dataframe.to_csv(f + ".csv", float_format="%.4f", index=False)
+        self.dataframe.to_csv(f + ".csv", float_format="%.6f", index=False)
 
     def load(self, f=None):
         if f is None:
@@ -157,11 +151,7 @@ class Trainer:
             self.dataframe = pd.read_csv(f + ".csv")
 
         if self.config['logdir'] is not None:
-            try:
-                from tensorboardX import SummaryWriter
-                self.logger = SummaryWriter(self.config['logdir'])
-            except ImportError:
-                self.logger = None
+            self.logger = SummaryWriter(self.config['logdir'])
         else:
             self.logger = None
 
@@ -170,15 +160,13 @@ class Trainer:
               step=None,
               validation_interval=1,
               save_every_validation=False):
-
         """
         :param epoch: train dataloader를 순회할 횟수
         :param phases: ['train', 'val', 'test'] 중 필요하지 않은 phase를 뺄 수 있다.
         >> trainer.train(1, phases=['val'])
-        ... validation without training ...
 
         :param step: epoch이 아닌 step을 훈련단위로 할 때의 총 step 수.
-        :param validation_interval: step이 훈련단위일때 validation 간격
+        :param validation_interval: validation 간격
         :param save_every_validation: True이면, validation마다 checkpoint를 저장한다.
         :return: None
         """
@@ -189,6 +177,8 @@ class Trainer:
             raise ValueError("PinkBlack.trainer :: epoch or step should be specified.")
 
         train_unit = 'epoch' if step is None else 'step'
+        self.config[train_unit] = int(self.config[train_unit])
+
         num_unit = epoch if step is None else step
         validation_interval = 1 if validation_interval <= 0 else validation_interval
 
@@ -201,7 +191,7 @@ class Trainer:
         print_row(kwarg_list=kwarg_list, pad=' ')
         print_row(kwarg_list=['']*len(kwarg_list), pad='-')
 
-        start = int(self.config[train_unit])
+        start = self.config[train_unit]
 
         for i in range(start + 1, start + num_unit + 1, validation_interval):
             start_time = time()
@@ -209,14 +199,16 @@ class Trainer:
                 for phase in phases:
                     self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
                 self.config[train_unit] += 1
-            else:
+            elif train_unit == "step":
                 for phase in phases:
                     if phase == "train":
                         num_steps = min((start + num_unit + 1 - i), validation_interval)
                         self.config[train_unit] += num_steps
-                    else:  # phase == "val":
+                    else:
                         num_steps = len(self.dataloader[phase])
                     self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=num_steps)
+            else:
+                raise NotImplementedError
 
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
@@ -241,8 +233,8 @@ class Trainer:
 
                 self.logger.add_scalars(f"{self.config['timestamp']}/loss", _loss, i)
                 self.logger.add_scalars(f"{self.config['timestamp']}/metric", _metric, i)
-                self.logger.add_scalars(f"{self.config['timestamp']}/time", elapsed_time, i)
-                self.logger.add_scalars(f"{self.config['timestamp']}/lr", self.optimizer.param_groups[0]['lr'], i)
+                self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, i)
+                self.logger.add_scalar(f"{self.config['timestamp']}/lr", self.optimizer.param_groups[0]['lr'], i)
 
             print_kwarg = [i_str]
             for phase in phases:
@@ -260,15 +252,14 @@ class Trainer:
                 self.save(self.ckpt + f"-{self.config[train_unit]}")
 
     def _step(self, phase, iterator, only_inference=False):
+
         if self.config['is_data_dict']:
             batch_dict = next(iterator)
             batch_size = batch_dict[list(batch_dict.keys())[0]].size(0)
             for k, v in batch_dict.items():
                 batch_dict[k] = v.to(self.device)
-
         else:
             batch_x, batch_y = next(iterator)
-
             if isinstance(batch_x, list):
                 batch_x = [x.to(self.device) for x in batch_x]
             else:
@@ -283,7 +274,6 @@ class Trainer:
 
         self.optimizer.zero_grad()
         with torch.set_grad_enabled(phase == "train"):
-
             if self.config['is_data_dict']:
                 outputs = self.net(batch_dict)
                 if not only_inference:
@@ -312,15 +302,13 @@ class Trainer:
                 'batch_size': batch_size,
                 'metric': metric.item()}
 
-
     def _train(self, phase, num_steps=0):
-
         running_loss = AverageMeter()
         running_metric = AverageMeter()
 
         if phase == 'train':
             self.net.train()
-        else: # phase == "val":
+        else:
             self.net.eval()
 
         dataloader = self.dataloader[phase]
@@ -395,48 +383,10 @@ class Trainer:
         self.net.apply(lambda module: set_momenta(module, momenta))
         self.net.train(was_training)
 
-if __name__ == "__main__":
-    # demo.py
-
-    import torch
-    import torchvision.utils as vutils
-    import numpy as np
-    import torchvision.models as models
-    from torch.utils.data import DataLoader
-    from torchvision import datasets, transforms
-    from tensorboardX import SummaryWriter
-    import torch.nn.functional as F
-    from PinkBlack.trainer import *
-
-    class Net(nn.Module):
-        def __init__(self):
-            super(Net, self).__init__()
-            self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-            self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-            self.conv2_drop = nn.Dropout2d()
-            self.fc1 = nn.Linear(320, 50)
-            self.fc2 = nn.Linear(50, 10)
-
-        def forward(self, x):
-            x = F.relu(F.max_pool2d(self.conv1(x), 2))
-            x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-            x = x.view(-1, 320)
-            x = F.relu(self.fc1(x))
-            x = F.dropout(x, training=self.training)
-            x = self.fc2(x)
-            return x
-
-    resnet18 = Net().cuda()
-
-    transform = transforms.Compose([
-        transforms.Resize((28, 28)),
-        transforms.ToTensor(),
-    ])
-
-    train_dataset = datasets.MNIST('mnist', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST('mnist', train=False, transform=transform)
-    train_dataloader = DataLoader(train_dataset, pin_memory=True, num_workers=4, shuffle=True, batch_size=32)
-    test_dataloader = DataLoader(test_dataset, pin_memory=True, num_workers=4, batch_size=32, shuffle=True)
-
-    trainer = Trainer(resnet18, train_dataloader=train_dataloader, val_dataloader=test_dataloader)
-    trainer.train(10)
+    @staticmethod
+    def get_model_device(net):
+        device = torch.device("cpu")
+        for param in net.parameters():
+            device = param.device
+            break
+        return device

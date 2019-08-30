@@ -1,1 +1,1 @@
-import PinkBlack.io
+import PinkBlack.io, PinkBlack.trainer

@@ -74,7 +74,11 @@ def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolo
     ```
     ```python3
     # Using PinkBlack
-    PinkBlack.io.setup(trace=True, pdb_on_error=True, default_args={'gpu':"1,3", 'batch_size':32, 'lr':1e-3, 'epochs':100, 'ckpt': "ckpt.pth"})
+    PinkBlack.io.setup(default_args=dict(gpu="1,3",
+                                         batch_size=32,
+                                         lr=1e-3,
+                                         epochs=100,
+                                         ckpt="ckpt.pth"))
     ```
     ```bash
     python myscript.py --gpu 1,3 --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
@@ -142,10 +146,3 @@ def set_seeds(seed, strict=False):
             torch.backends.cudnn.deterministic = True
     np.random.seed(seed)
     random.seed(seed)
-
-
-if __name__ == "__main__":
-    args = get_args({"batch_size":8, "lr":"아무거나"})
-    setup()
-    1/0
-    11/1
