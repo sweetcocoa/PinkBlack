@@ -54,8 +54,10 @@ class Trainer:
                  lr_scheduler=None,
                  logdir="./pinkblack_autolog/",
                  ckpt="./ckpt/ckpt.pth",
+                 experiment_name=None,
                  clip_gradient_norm=False,
-                 is_data_dict=False):
+                 is_data_dict=False,
+                 ):
         """
         :param net: nn.Module Network
         :param criterion: loss function. __call__(prediction, *batch_y)
@@ -70,6 +72,7 @@ class Trainer:
         :param lr_scheduler:
         :param logdir: tensorboard log
         :param ckpt:
+        :param experiment_name: be showed on tensorboard
         :param clip_gradient_norm: False or Scalar value (숫자를 입력하면 gradient clipping한다.)
         :param is_data_dict: whether dataloaders return dict. (dataloader에서 주는 데이터가 dict인지)
         """
@@ -102,6 +105,11 @@ class Trainer:
         self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.config['clip_gradient_norm'] = clip_gradient_norm
         self.config['is_data_dict'] = is_data_dict
+        
+        if experiment_name is None : 
+            self.config['experiment_name'] = self.config['timestamp']
+        else:
+            self.config['experiment_name'] = experiment_name
 
         self.dataframe = pd.DataFrame()
 
@@ -114,6 +122,11 @@ class Trainer:
         else:
             self.logger = None
 
+        self.callbacks = defaultdict(list)
+
+    def register_callback(self, func, phase="val"):
+        self.callbacks[phase].append(func)
+
     def save(self, f=None):
         if f is None:
             f = self.ckpt
@@ -124,6 +137,10 @@ class Trainer:
             state_dict = self.net.state_dict()
         torch.save(state_dict, f)
         torch.save(self.optimizer.state_dict(), f + ".optimizer")
+
+        if self.lr_scheduler is not None:
+            torch.save(self.lr_scheduler.state_dict(), f + ".scheduler")
+
         with open(f + ".config", "w") as fp:
             json.dump(self.config, fp)
 
@@ -146,6 +163,9 @@ class Trainer:
 
         if os.path.exists(f + ".optimizer"):
             self.optimizer.load_state_dict(torch.load(f + ".optimizer"))
+
+        if os.path.exists(f + ".scheduler") and self.lr_scheduler is not None:
+            self.lr_scheduler.load_state_dict(torch.load(f + ".scheduler"))
 
         if os.path.exists(f + ".csv"):
             self.dataframe = pd.read_csv(f + ".csv")
@@ -193,20 +213,25 @@ class Trainer:
 
         start = self.config[train_unit]
 
-        for i in range(start + 1, start + num_unit + 1, validation_interval):
+        for i in range(start, start + num_unit, validation_interval):
             start_time = time()
             if train_unit == "epoch":
                 for phase in phases:
                     self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
+                    for func in self.callbacks[phase]: 
+                        func()
                 self.config[train_unit] += 1
             elif train_unit == "step":
                 for phase in phases:
                     if phase == "train":
-                        num_steps = min((start + num_unit + 1 - i), validation_interval)
+                        # num_unit 이 validation interval로 나눠떨어지지 않는 경우
+                        num_steps = min((start + num_unit - i), validation_interval)
                         self.config[train_unit] += num_steps
                     else:
                         num_steps = len(self.dataloader[phase])
                     self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=num_steps)
+                    for func in self.callbacks[phase]: 
+                        func()
             else:
                 raise NotImplementedError
 
@@ -231,10 +256,10 @@ class Trainer:
                     _loss[phase] = self.config[f"{phase}_loss"]
                     _metric[phase] = self.config[f"{phase}_metric"]
 
-                self.logger.add_scalars(f"{self.config['timestamp']}/loss", _loss, i)
-                self.logger.add_scalars(f"{self.config['timestamp']}/metric", _metric, i)
-                self.logger.add_scalar(f"{self.config['timestamp']}/time", elapsed_time, i)
-                self.logger.add_scalar(f"{self.config['timestamp']}/lr", self.optimizer.param_groups[0]['lr'], i)
+                self.logger.add_scalars(f"{self.config['experiment_name']}/loss", _loss, self.config[train_unit])
+                self.logger.add_scalars(f"{self.config['experiment_name']}/metric", _metric, self.config[train_unit])
+                self.logger.add_scalar(f"{self.config['experiment_name']}/time", elapsed_time, self.config[train_unit])
+                self.logger.add_scalar(f"{self.config['experiment_name']}/lr", self.optimizer.param_groups[0]['lr'], self.config[train_unit])
 
             print_kwarg = [i_str]
             for phase in phases:
@@ -313,10 +338,12 @@ class Trainer:
 
         dataloader = self.dataloader[phase]
         step_iterator = iter(dataloader)
-        for st in tqdm(range(num_steps), leave=False):
+        tq = tqdm(range(num_steps), leave=False)
+        for st in tq:
             if (st + 1) % len(dataloader) == 0:
                 step_iterator = iter(dataloader)
             results = self._step(phase=phase, iterator=step_iterator)
+            tq.set_description(f"Loss:{results['loss']:.4f}, Metric:{results['metric']:.4f}")
             running_loss.update(results['loss'], results['batch_size'])
             running_metric.update(results['metric'], results['batch_size'])
 
