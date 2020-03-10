@@ -5,14 +5,21 @@
 1. 자동 로깅 (Autolog)
     - stdout, stderr redirection
 
-2. 명령줄 분해 (Argument Parsing)
+2. yaml 설정파일 입력, 커맨드라인을 통한 overriding
+    ```yaml
+    # setting.yaml
+    batch_size: 32
+    gpu: 3
+    model: "ResNet"
+    ```
+
     ```python
     import PinkBlack.io
     # Set default argument
+    args = PinkBlack.io.setup(default_args="setting.yaml") # 또는
     args = PinkBlack.io.setup(default_args=dict(gpu=3,
-                                                batch_size=32,
-                                                model="ResNet"))
-    # Autolog and pdb hooking will be activated.
+                                            batch_size=32,
+                                            model="ResNet"))
     print(args.batch_size)
     ```
     ```bash
@@ -27,7 +34,7 @@
                                         train_dataloader=tdl, 
                                         val_dataloader=vdl,
                                         lr_scheduler=steplr,
-                                        logdir="tensorboard_dir",
+                                        tensorboard_dir="tensorboard_dir",
                                         ckpt="ckpt/trained.pth")
     trainer.load("ckpt/trained.pth")
     trainer.train(epoch=100)
@@ -37,7 +44,7 @@
     - train loss, train metric, validation loss, validation metric을 tensorboard에 기록
     - max validation metric, current epoch 등을 ckpt+".config" 에 저장, 로드
 
-4. face detection, facial landmark detection module
+5. face detection, facial landmark detection module
     ```python
     import PinkBlack.face
     sfd = PinkBlack.face.S3FD("s3fd.pth")

@@ -4,7 +4,6 @@ from torch.optim import Adam
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-
 from tqdm import tqdm
 from time import time
 from tensorboardX.writer import SummaryWriter
@@ -19,11 +18,11 @@ import pandas as pd
 from .PinkModule.logging import *
 from .PinkModule.swa_batchnorm_utils import *
 
-
 class AverageMeter(object):
     """
     Computes and stores the average and current value
     """
+
     def __init__(self):
         self.val = 0
         self.avg = 0
@@ -44,20 +43,24 @@ def cal_accuracy(pred, target):
 
 
 class Trainer:
-    def __init__(self, net,
-                 criterion=None,
-                 metric=cal_accuracy,
-                 train_dataloader=None,
-                 val_dataloader=None,
-                 test_dataloader=None,
-                 optimizer=None,
-                 lr_scheduler=None,
-                 logdir="./pinkblack_autolog/",
-                 ckpt="./ckpt/ckpt.pth",
-                 experiment_name=None,
-                 clip_gradient_norm=False,
-                 is_data_dict=False,
-                 ):
+    experiment_name = None
+
+    def __init__(
+        self,
+        net,
+        criterion=None,
+        metric=cal_accuracy,
+        train_dataloader=None,
+        val_dataloader=None,
+        test_dataloader=None,
+        optimizer=None,
+        lr_scheduler=None,
+        tensorboard_dir="./pinkblack_tb/",
+        ckpt="./ckpt/ckpt.pth",
+        experiment_id=None,
+        clip_gradient_norm=False,
+        is_data_dict=False,
+    ):
         """
         :param net: nn.Module Network
         :param criterion: loss function. __call__(prediction, *batch_y)
@@ -70,11 +73,12 @@ class Trainer:
 
         :param optimizer: torch.optim
         :param lr_scheduler:
-        :param logdir: tensorboard log
-        :param ckpt:
-        :param experiment_name: be showed on tensorboard
+        :param tensorboard_dir: tensorboard log
+        :param ckpt: weight path
+        :param experiment_id: be shown on tensorboard
         :param clip_gradient_norm: False or Scalar value (숫자를 입력하면 gradient clipping한다.)
-        :param is_data_dict: whether dataloaders return dict. (dataloader에서 주는 데이터가 dict인지)
+        :param is_data_dict: whether dataloaders return dict. 
+        (dataloader에서 주는 데이터가 dict인지 - 아니라면 (x, y pair tuple로 주는 데이터이다.)
         """
 
         self.net = net
@@ -83,44 +87,50 @@ class Trainer:
 
         self.dataloader = dict()
         if train_dataloader is not None:
-            self.dataloader['train'] = train_dataloader
+            self.dataloader["train"] = train_dataloader
         if val_dataloader is not None:
-            self.dataloader['val'] = val_dataloader
+            self.dataloader["val"] = val_dataloader
         if test_dataloader is not None:
-            self.dataloader['test'] = test_dataloader
+            self.dataloader["test"] = test_dataloader
 
         if train_dataloader is None or val_dataloader is None:
             logging.warning("Init Trainer :: Two dataloaders are needed!")
 
-        self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters())) if optimizer is None else optimizer
+        self.optimizer = (
+            Adam(filter(lambda p: p.requires_grad, self.net.parameters()))
+            if optimizer is None
+            else optimizer
+        )
         self.lr_scheduler = lr_scheduler
 
         self.ckpt = ckpt
 
         self.config = defaultdict(float)
-        self.config['max_train_metric'] = -1e8
-        self.config['max_val_metric'] = -1e8
-        self.config['max_test_metric'] = -1e8
-        self.config['logdir'] = logdir
-        self.config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.config['clip_gradient_norm'] = clip_gradient_norm
-        self.config['is_data_dict'] = is_data_dict
-        
-        if experiment_name is None : 
-            self.config['experiment_name'] = self.config['timestamp']
+        self.config["max_train_metric"] = -1e8
+        self.config["max_val_metric"] = -1e8
+        self.config["max_test_metric"] = -1e8
+        self.config["tensorboard_dir"] = tensorboard_dir
+        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.config["clip_gradient_norm"] = clip_gradient_norm
+        self.config["is_data_dict"] = is_data_dict
+
+        if experiment_id is None:
+            self.config["experiment_id"] = self.config["timestamp"]
         else:
-            self.config['experiment_name'] = experiment_name
+            self.config["experiment_id"] = experiment_id
 
         self.dataframe = pd.DataFrame()
 
         self.device = Trainer.get_model_device(self.net)
         if self.device == torch.device("cpu"):
-            logging.warning("Init Trainer :: Do you really want to train the network on CPU instead of GPU?")
+            logging.warning(
+                "Init Trainer :: Do you really want to train the network on CPU instead of GPU?"
+            )
 
-        if self.config['logdir'] is not None:
-            self.logger = SummaryWriter(self.config['logdir'])
+        if self.config["tensorboard_dir"] is not None:
+            self.tensorboard = SummaryWriter(self.config["tensorboard_dir"])
         else:
-            self.logger = None
+            self.tensorboard = None
 
         self.callbacks = defaultdict(list)
 
@@ -170,16 +180,14 @@ class Trainer:
         if os.path.exists(f + ".csv"):
             self.dataframe = pd.read_csv(f + ".csv")
 
-        if self.config['logdir'] is not None:
-            self.logger = SummaryWriter(self.config['logdir'])
+        if self.config["tensorboard_dir"] is not None:
+            self.tensorboard = SummaryWriter(self.config["tensorboard_dir"])
         else:
-            self.logger = None
+            self.tensorboard = None
 
-    def train(self, epoch=None,
-              phases=None,
-              step=None,
-              validation_interval=1,
-              save_every_validation=False):
+    def train(
+        self, epoch=None, phases=None, step=None, validation_interval=1, save_every_validation=False
+    ):
         """
         :param epoch: train dataloader를 순회할 횟수
         :param phases: ['train', 'val', 'test'] 중 필요하지 않은 phase를 뺄 수 있다.
@@ -196,7 +204,7 @@ class Trainer:
         if epoch is None and step is None:
             raise ValueError("PinkBlack.trainer :: epoch or step should be specified.")
 
-        train_unit = 'epoch' if step is None else 'step'
+        train_unit = "epoch" if step is None else "step"
         self.config[train_unit] = int(self.config[train_unit])
 
         num_unit = epoch if step is None else step
@@ -205,11 +213,11 @@ class Trainer:
         kwarg_list = [train_unit]
         for phase in phases:
             kwarg_list += [f"{phase}_loss", f"{phase}_metric"]
-        kwarg_list += ['lr', 'time']
+        kwarg_list += ["lr", "time"]
 
-        print_row(kwarg_list=['']*len(kwarg_list), pad='-')
-        print_row(kwarg_list=kwarg_list, pad=' ')
-        print_row(kwarg_list=['']*len(kwarg_list), pad='-')
+        print_row(kwarg_list=[""] * len(kwarg_list), pad="-")
+        print_row(kwarg_list=kwarg_list, pad=" ")
+        print_row(kwarg_list=[""] * len(kwarg_list), pad="-")
 
         start = self.config[train_unit]
 
@@ -217,8 +225,10 @@ class Trainer:
             start_time = time()
             if train_unit == "epoch":
                 for phase in phases:
-                    self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=len(self.dataloader[phase]))
-                    for func in self.callbacks[phase]: 
+                    self.config[f"{phase}_loss"], self.config[f"{phase}_metric"] = self._train(
+                        phase, num_steps=len(self.dataloader[phase])
+                    )
+                    for func in self.callbacks[phase]:
                         func()
                 self.config[train_unit] += 1
             elif train_unit == "step":
@@ -229,56 +239,73 @@ class Trainer:
                         self.config[train_unit] += num_steps
                     else:
                         num_steps = len(self.dataloader[phase])
-                    self.config[f'{phase}_loss'], self.config[f'{phase}_metric'] = self._train(phase, num_steps=num_steps)
-                    for func in self.callbacks[phase]: 
+                    self.config[f"{phase}_loss"], self.config[f"{phase}_metric"] = self._train(
+                        phase, num_steps=num_steps
+                    )
+                    for func in self.callbacks[phase]:
                         func()
             else:
                 raise NotImplementedError
 
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, ReduceLROnPlateau):
-                    self.lr_scheduler.step(self.config['val_metric'])
+                    self.lr_scheduler.step(self.config["val_metric"])
                 else:
                     self.lr_scheduler.step()
 
             i_str = str(self.config[train_unit])
-            is_best = self.config['max_val_metric'] < self.config['val_metric']
+            is_best = self.config["max_val_metric"] < self.config["val_metric"]
             if is_best:
                 for phase in phases:
-                    self.config[f'max_{phase}_metric'] = max(self.config[f'max_{phase}_metric'],
-                                                             self.config[f"{phase}_metric"])
-                i_str = (str(self.config[train_unit])) + '-best'
+                    self.config[f"max_{phase}_metric"] = max(
+                        self.config[f"max_{phase}_metric"], self.config[f"{phase}_metric"]
+                    )
+                i_str = (str(self.config[train_unit])) + "-best"
 
             elapsed_time = time() - start_time
-            if self.logger is not None:
+            if self.tensorboard is not None:
                 _loss, _metric = {}, {}
                 for phase in phases:
                     _loss[phase] = self.config[f"{phase}_loss"]
                     _metric[phase] = self.config[f"{phase}_metric"]
 
-                self.logger.add_scalars(f"{self.config['experiment_name']}/loss", _loss, self.config[train_unit])
-                self.logger.add_scalars(f"{self.config['experiment_name']}/metric", _metric, self.config[train_unit])
-                self.logger.add_scalar(f"{self.config['experiment_name']}/time", elapsed_time, self.config[train_unit])
-                self.logger.add_scalar(f"{self.config['experiment_name']}/lr", self.optimizer.param_groups[0]['lr'], self.config[train_unit])
+                self.tensorboard.add_scalars(
+                    f"{self.config['experiment_id']}/loss", _loss, self.config[train_unit]
+                )
+                self.tensorboard.add_scalars(
+                    f"{self.config['experiment_id']}/metric", _metric, self.config[train_unit]
+                )
+                self.tensorboard.add_scalar(
+                    f"{self.config['experiment_id']}/time", elapsed_time, self.config[train_unit]
+                )
+                self.tensorboard.add_scalar(
+                    f"{self.config['experiment_id']}/lr",
+                    self.optimizer.param_groups[0]["lr"],
+                    self.config[train_unit],
+                )
 
             print_kwarg = [i_str]
             for phase in phases:
-                print_kwarg += [self.config[f'{phase}_loss'], self.config[f'{phase}_metric']]
-            print_kwarg += [self.optimizer.param_groups[0]['lr'], elapsed_time]
+                print_kwarg += [self.config[f"{phase}_loss"], self.config[f"{phase}_metric"]]
+            print_kwarg += [self.optimizer.param_groups[0]["lr"], elapsed_time]
 
-            print_row(kwarg_list=print_kwarg, pad=' ')
-            print_row(kwarg_list=['']*len(kwarg_list), pad='-')
-            self.dataframe = self.dataframe.append(dict(zip(kwarg_list, print_kwarg)), ignore_index=True)
+            print_row(kwarg_list=print_kwarg, pad=" ")
+            print_row(kwarg_list=[""] * len(kwarg_list), pad="-")
+            self.dataframe = self.dataframe.append(
+                dict(zip(kwarg_list, print_kwarg)), ignore_index=True
+            )
 
             if is_best:
                 self.save(self.ckpt)
+                if Trainer.experiment_name is not None:
+                    self.update_experiment()
 
             if save_every_validation:
                 self.save(self.ckpt + f"-{self.config[train_unit]}")
 
     def _step(self, phase, iterator, only_inference=False):
 
-        if self.config['is_data_dict']:
+        if self.config["is_data_dict"]:
             batch_dict = next(iterator)
             batch_size = batch_dict[list(batch_dict.keys())[0]].size(0)
             for k, v in batch_dict.items():
@@ -299,7 +326,7 @@ class Trainer:
 
         self.optimizer.zero_grad()
         with torch.set_grad_enabled(phase == "train"):
-            if self.config['is_data_dict']:
+            if self.config["is_data_dict"]:
                 outputs = self.net(batch_dict)
                 if not only_inference:
                     loss = self.criterion(outputs, batch_dict)
@@ -313,25 +340,23 @@ class Trainer:
 
             if phase == "train":
                 loss.backward()
-                if self.config['clip_gradient_norm']:
-                    clip_grad_norm_(self.net.parameters(), self.config['clip_gradient_norm'])
+                if self.config["clip_gradient_norm"]:
+                    clip_grad_norm_(self.net.parameters(), self.config["clip_gradient_norm"])
                 self.optimizer.step()
 
         with torch.no_grad():
-            if self.config['is_data_dict']:
+            if self.config["is_data_dict"]:
                 metric = self.metric(outputs, batch_dict)
             else:
                 metric = self.metric(outputs, *batch_y)
 
-        return {'loss': loss.item(),
-                'batch_size': batch_size,
-                'metric': metric.item()}
+        return {"loss": loss.item(), "batch_size": batch_size, "metric": metric.item()}
 
     def _train(self, phase, num_steps=0):
         running_loss = AverageMeter()
         running_metric = AverageMeter()
 
-        if phase == 'train':
+        if phase == "train":
             self.net.train()
         else:
             self.net.eval()
@@ -344,15 +369,15 @@ class Trainer:
                 step_iterator = iter(dataloader)
             results = self._step(phase=phase, iterator=step_iterator)
             tq.set_description(f"Loss:{results['loss']:.4f}, Metric:{results['metric']:.4f}")
-            running_loss.update(results['loss'], results['batch_size'])
-            running_metric.update(results['metric'], results['batch_size'])
+            running_loss.update(results["loss"], results["batch_size"])
+            running_metric.update(results["metric"], results["batch_size"])
 
         return running_loss.avg, running_metric.avg
 
     def eval(self, dataloader=None):
         self.net.eval()
         if dataloader is None:
-            dataloader = self.dataloader['val']
+            dataloader = self.dataloader["val"]
             phase = "val"
 
         output_list = []
@@ -365,6 +390,37 @@ class Trainer:
         output_cat = torch.cat(output_list)
         return output_cat
 
+    def add_external_config(self, args):
+        """
+        args : a dict-like object which contains key-value configurations.
+        """
+        if isinstance(args, dict):
+            new_d = defaultdict(float)
+            for k, v in args.items():
+                new_d[f"config_{k}"] = v
+            self.config.update(new_d)
+        else:
+            new_d = defaultdict(float)
+            for k, v in args.__dict__.items():
+                new_d[f"config_{k}"] = v
+            self.config.update(new_d)
+
+    def update_experiment(self):
+        """
+        Update experiment statistics by its name (csv file).
+        """
+        assert Trainer.experiment_name is not None
+        df_config = pd.DataFrame(pd.Series(self.config)).T.set_index("experiment_id")
+        if os.path.exists(Trainer.experiment_name + ".csv"):
+            df_ex = pd.read_csv(Trainer.experiment_name + ".csv", index_col=0)
+            if self.config["experiment_id"] in df_ex.index:
+                df_ex = df_ex.drop(self.config["experiment_id"])
+            df_ex = df_ex.append(df_config, sort=False)
+        else:
+            df_ex = df_config
+        df_ex.to_csv(Trainer.experiment_name + ".csv")
+        return df_ex
+
     def swa_apply(self, bn_update=True):
         assert hasattr(self.optimizer, "swap_swa_sgd")
         self.optimizer.swap_swa_sgd()
@@ -373,10 +429,8 @@ class Trainer:
 
     def swa_bn_update(self):
         r"""Updates BatchNorm running_mean, running_var buffers in the model.
-
         It performs one pass over data in `loader` to estimate the activation
         statistics for BatchNorm layers in the model.
-
         original source is from : torchcontrib
         """
         if not check_bn(self.net):
@@ -417,3 +471,7 @@ class Trainer:
             device = param.device
             break
         return device
+
+    @staticmethod
+    def set_experiment_name(name):
+        Trainer.experiment_name = name

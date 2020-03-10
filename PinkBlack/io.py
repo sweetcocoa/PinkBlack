@@ -1,13 +1,10 @@
 import sys, os
+
 from .PinkModule.logging import PinkBlackLogger
-
-try:
-    import torch
-except ImportError:
-    print("Warning : No pytorch Module is imported, Some functions may raise errors.", file=sys.stderr)
+from omegaconf import OmegaConf, DictConfig
 
 
-def convert_type(string:str):
+def convert_type(string: str):
     try:
         f = float(string)
         if f.is_integer():
@@ -18,67 +15,84 @@ def convert_type(string:str):
         return string
 
 
-def get_args(default_args: dict):
-    import argparse
-    parser = argparse.ArgumentParser()
-
-    if not "gpu" in default_args.keys():
-        parser.add_argument(f'--gpu', default=None, help='CUDA visible devices : default:None')
-
-    for k, v in default_args.items():
+def add_argument(dict_like, parser, prefix=""):
+    for k, v in dict_like.items():
         k = k.lower()
         if isinstance(v, bool):
             if v is True:
-                parser.add_argument(f'--{k}', help=f'{k} : default:{v}', action='store_false')
+                parser.add_argument(
+                    f"--{prefix}{k}", help=f"{prefix}{k} : default:{v}", action="store_false"
+                )
             else:
-                parser.add_argument(f'--{k}', help=f'{k} : default:{v}', action='store_true')
-
+                parser.add_argument(
+                    f"--{prefix}{k}", help=f"{prefix}{k} : default:{v}", action="store_true"
+                )
+        elif isinstance(v, DictConfig):
+            add_argument(v, parser, prefix=prefix + f"{k}.")
         else:
-            parser.add_argument(f'--{k}', default=v, help=f'{k} : default:{v}')
+            parser.add_argument(f"--{prefix}{k}", default=v, help=f"{k} : default:{v}")
+
+
+def set_argument(dict_like, key, value):
+    if key.find(".") == -1:
+        if not isinstance(value, bool):
+            setattr(dict_like, key, convert_type(str(value)))
+        else:
+            setattr(dict_like, key, value)
+    else:
+        set_argument(getattr(dict_like, key[: key.find(".")]), key[key.find(".") + 1 :], value)
+
+
+def get_args(default_config: dict):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+
+    if not "gpu" in default_config.keys():
+        parser.add_argument(f"--gpu", default=None, help="CUDA visible devices : default:None")
+
+    add_argument(default_config, parser, prefix="")
     args = parser.parse_args()
 
-    if args.gpu and "gpu" in default_args.keys():
+    if args.gpu:  # and "gpu" in default_config.keys():
         # Default argument로 gpu를 줬다면 이렇게 세팅
-        os.environ.update({'CUDA_VISIBLE_DEVICES': str(args.gpu)})
+        os.environ.update({"CUDA_VISIBLE_DEVICES": str(args.gpu)})
+    import pdb
 
-    for k in default_args.keys():
+    return_config = default_config.copy()
+
+    for k, v in args.__dict__.items():
         k = k.lower()
-        val = getattr(args, k)
-        if not isinstance(val, bool):
-            setattr(args, k, convert_type(str(val)))
+        set_argument(return_config, k, v)
 
-    return args
+    return return_config
 
-def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolog_dir="pinkblack_autolog"):
+
+def setup(
+    trace=False,
+    pdb_on_error=True,
+    default_config=None,
+    autolog=False,
+    autolog_dir="pinkblack_autolog",
+):
     """
     :param trace:
     :param pdb_on_error:
-    :param default_args:
+    :param default_config: dict or str(yaml file)
     :param autolog:
     :param autolog_dir:
-    gpu -> CUDA_VISIBLE_DEVICES
-    :return: argparsed args
+    :return: argparsed config
 
     Example >>
-    ```python3
-    # Before PinkBlack
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', default=32, type=int)
-    parser.add_argument('--lr', default=1e-3, type=float)
-    parser.add_argument('--epochs', default=100, type=int)
-    parser.add_argument('--ckpt', default='ckpt.pth', type=str)
-    args = parser.parse_args()
-    ```
     ```bash
     CUDA_VISIBLE_DEVICES=1,3 python myscript.py --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
     ```
     ```python3
-    # Using PinkBlack
-    PinkBlack.io.setup(default_args=dict(gpu="1,3",
-                                         batch_size=32,
-                                         lr=1e-3,
-                                         epochs=100,
-                                         ckpt="ckpt.pth"))
+    setup(default_config=dict(gpu="1,3",
+                             batch_size=32,
+                             lr=1e-3,
+                             epochs=100,
+                             ckpt="ckpt.pth"))
     ```
     ```bash
     python myscript.py --gpu 1,3 --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
@@ -87,6 +101,7 @@ def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolo
     """
     if trace:
         import backtrace
+
         backtrace.hook(align=True)
 
     if pdb_on_error:
@@ -96,35 +111,40 @@ def setup(trace=True, pdb_on_error=True, default_args=None, autolog=True, autolo
             old_hook(type_, value, tb)
             if type_ != KeyboardInterrupt:
                 import pdb
+
                 pdb.post_mortem(tb)
 
         sys.excepthook = new_hook
 
     args = None
-    if default_args is not None:
-        args = get_args(default_args)
+    if default_config is not None:
+        if isinstance(default_config, str):
+            default_config = OmegaConf.load(default_config)
+        elif isinstance(default_config, dict):
+            default_config = OmegaConf.create(default_config)
+        args = get_args(default_config)
+
+    import time, datetime
+
+    dt = datetime.datetime.fromtimestamp(time.time())
+    dt = datetime.datetime.strftime(dt, f"{os.path.basename(sys.argv[0])}.%Y%m%d_%H%M%S.log")
+
+    if args is not None and hasattr(args, "ckpt"):
+        logpath = args.ckpt + "_" + dt
+    else:
+        logpath = os.path.join(autolog_dir, dt)
+
+    os.makedirs(os.path.dirname(logpath), exist_ok=True)
+
+    if args is not None:
+        conf = OmegaConf.create(args.__dict__)
+        conf.save(logpath[:-4] + ".yaml")
+        conf.save(args.ckpt + ".yaml")
 
     if autolog:
-        import time, datetime
-        dt = datetime.datetime.fromtimestamp(time.time())
-        dt = datetime.datetime.strftime(dt, f'{os.path.basename(sys.argv[0])}_%Y%m%d_%H%M%S.log')
-
-        if args is not None and hasattr(args, "ckpt"):
-            logpath = args.ckpt + "_" + dt
-        else:
-            logpath = os.path.join(autolog_dir, dt)
-
-        os.makedirs(os.path.dirname(logpath), exist_ok=True)
-
-        if args is not None:
-            import json
-            with open(logpath[:-4] + ".args", "w") as fp_args:
-                json.dump(args.__dict__, fp_args)
-
         fp = open(logpath, "w")
         sys.stdout = PinkBlackLogger(fp, sys.stdout)
         sys.stderr = PinkBlackLogger(fp, sys.stderr)
-        print("PinkBlack :: args :", args.__dict__)
 
     return args
 
@@ -139,6 +159,8 @@ def set_seeds(seed, strict=False):
     """
     import random
     import numpy as np
+    import torch
+
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
