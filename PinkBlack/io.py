@@ -4,68 +4,12 @@ from .PinkModule.logging import PinkBlackLogger
 from omegaconf import OmegaConf, DictConfig
 
 
-def convert_type(string: str):
-    try:
-        f = float(string)
-        if f.is_integer():
-            return int(f)
-        else:
-            return f
-    except ValueError:
-        return string
-
-
-def add_argument(dict_like, parser, prefix=""):
-    for k, v in dict_like.items():
-        k = k.lower()
-        if isinstance(v, bool):
-            if v is True:
-                parser.add_argument(
-                    f"--{prefix}{k}", help=f"{prefix}{k} : default:{v}", action="store_false"
-                )
-            else:
-                parser.add_argument(
-                    f"--{prefix}{k}", help=f"{prefix}{k} : default:{v}", action="store_true"
-                )
-        elif isinstance(v, DictConfig):
-            add_argument(v, parser, prefix=prefix + f"{k}.")
-        else:
-            parser.add_argument(f"--{prefix}{k}", default=v, help=f"{k} : default:{v}")
-
-
-def set_argument(dict_like, key, value):
-    if key.find(".") == -1:
-        if not isinstance(value, bool):
-            setattr(dict_like, key, convert_type(str(value)))
-        else:
-            setattr(dict_like, key, value)
-    else:
-        set_argument(getattr(dict_like, key[: key.find(".")]), key[key.find(".") + 1 :], value)
-
-
-def get_args(default_config: dict):
-    import argparse
-
-    parser = argparse.ArgumentParser()
-
-    if not "gpu" in default_config.keys():
-        parser.add_argument(f"--gpu", default=None, help="CUDA visible devices : default:None")
-
-    add_argument(default_config, parser, prefix="")
-    args = parser.parse_args()
-
-    if args.gpu:  # and "gpu" in default_config.keys():
+def from_cli(default_config: DictConfig):
+    default_config.merge_with_cli()
+    if "gpu" in default_config.keys():
         # Default argument로 gpu를 줬다면 이렇게 세팅
-        os.environ.update({"CUDA_VISIBLE_DEVICES": str(args.gpu)})
-    import pdb
-
-    return_config = default_config.copy()
-
-    for k, v in args.__dict__.items():
-        k = k.lower()
-        set_argument(return_config, k, v)
-
-    return return_config
+        os.environ.update({"CUDA_VISIBLE_DEVICES": str(default_config.gpu)})
+    return default_config
 
 
 def setup(
@@ -81,23 +25,7 @@ def setup(
     :param default_config: dict or str(yaml file)
     :param autolog:
     :param autolog_dir:
-    :return: argparsed config
-
-    Example >>
-    ```bash
-    CUDA_VISIBLE_DEVICES=1,3 python myscript.py --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
-    ```
-    ```python3
-    setup(default_config=dict(gpu="1,3",
-                             batch_size=32,
-                             lr=1e-3,
-                             epochs=100,
-                             ckpt="ckpt.pth"))
-    ```
-    ```bash
-    python myscript.py --gpu 1,3 --batch_size 32 --ckpt ckpt.pth --epochs 100 --lr 0.001
-    ```
-
+    :return: config
     """
     if trace:
         import backtrace
@@ -122,7 +50,7 @@ def setup(
             default_config = OmegaConf.load(default_config)
         elif isinstance(default_config, dict):
             default_config = OmegaConf.create(default_config)
-        args = get_args(default_config)
+        args = from_cli(default_config)
 
     import time, datetime
 

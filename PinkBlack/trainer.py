@@ -394,16 +394,10 @@ class Trainer:
         """
         args : a dict-like object which contains key-value configurations.
         """
-        if isinstance(args, dict):
-            new_d = defaultdict(float)
-            for k, v in args.items():
-                new_d[f"config_{k}"] = v
-            self.config.update(new_d)
-        else:
-            new_d = defaultdict(float)
-            for k, v in args.__dict__.items():
-                new_d[f"config_{k}"] = v
-            self.config.update(new_d)
+        new_d = defaultdict(float)
+        for k, v in args.items():
+            new_d[f"config_{k}"] = v
+        self.config.update(new_d)
 
     def update_experiment(self):
         """
